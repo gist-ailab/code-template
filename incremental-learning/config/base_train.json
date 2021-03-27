@@ -1,0 +1,19 @@
+{
+  "gpu": "1,2,3",
+  "only_init": true,
+  "resume": false,
+  "resume_task_id": 0,
+
+  "num_init_segment": 5,
+  "num_segment": 5,
+  "num_examplary": 0,
+
+  "total_epoch": 2,
+  "lr": 1e-3,
+  "scheduler": null,
+  "batch_size": 512,
+
+  "ddp": true,
+  "pin_memory": true,
+  "mixed_precision": true
+}
