@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 from tqdm import tqdm
+import os
 
 def accuracy(output, target, topk=(1,)):
     """Computes the accuracy over the k top predictions for the specified values of k"""
@@ -19,7 +20,7 @@ def accuracy(output, target, topk=(1,)):
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
 
-def train(option, rank, epoch, model, criterion, optimizer, tr_loader, scaler, save_module, neptune):
+def train(option, rank, epoch, model, criterion, optimizer, tr_loader, scaler, save_module, neptune, save_folder):
     multi_gpu = len(option.result['train']['gpu'].split(',')) > 1
 
     # For Log
@@ -60,20 +61,25 @@ def train(option, rank, epoch, model, criterion, optimizer, tr_loader, scaler, s
 
     # Saving Network Params
     if multi_gpu:
-        save_module.save_dict['model'] = [model.module.state_dict()]
+        model_param = model.module.state_dict()
     else:
-        save_module.save_dict['model'] = [model.state_dict()]
+        model_param = model.state_dict()
 
+    save_module.save_dict['model'] = [model_param]
     save_module.save_dict['optimizer'] = [optimizer.state_dict()]
     save_module.save_dict['save_epoch'] = epoch
 
-    # Logging
     if (rank == 0) or (rank == 'cuda'):
+        # Loggin
         print('Epoch-(%d/%d) - tr_ACC@1: %.2f, tr_ACC@5-%.2f, tr_loss:%.3f' %(epoch, option.result['train']['total_epoch'], \
                                                                             mean_acc1, mean_acc5, mean_loss))
         neptune.log_metric('tr_loss', mean_loss)
         neptune.log_metric('tr_acc1', mean_acc1)
         neptune.log_metric('tr_acc5', mean_acc5)
+
+        # Save
+        if epoch % option.result['train']['save_epoch'] == 0:
+            torch.save(model_param, os.path.join(save_folder, 'epoch%d_model.pt' %epoch))
 
     return model, optimizer, save_module
 

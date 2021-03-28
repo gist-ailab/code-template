@@ -19,7 +19,7 @@ def accuracy(output, target, topk=(1,)):
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
 
-def train(option, rank, epoch, task_id, new_model, old_model, criterion, optimizer, tr_loader, scaler, save_module, neptune):
+def train(option, rank, epoch, task_id, new_model, old_model, criterion, optimizer, tr_loader, scaler, save_module):
     multi_gpu = len(option.result['train']['gpu'].split(',')) > 1
 
     # For Log
@@ -70,14 +70,10 @@ def train(option, rank, epoch, task_id, new_model, old_model, criterion, optimiz
     if (rank == 0) or (rank == 'cuda'):
         print('Epoch-(%d/%d) - tr_ACC@1: %.2f, tr_ACC@5-%.2f, tr_loss:%.3f' %(epoch, option.result['train']['total_epoch']-1, \
                                                                             mean_acc1, mean_acc5, mean_loss))
-        neptune.log_metric('tr_loss', mean_loss)
-        neptune.log_metric('tr_acc1', mean_acc1)
-        neptune.log_metric('tr_acc5', mean_acc5)
-
     return new_model, optimizer, save_module
 
 
-def validation(option, rank, epoch, task_id, new_model, old_model, criterion, val_loader, neptune):
+def validation(option, rank, epoch, task_id, new_model, old_model, criterion, val_loader):
     # For Log
     mean_loss = 0.
     mean_acc1 = 0.
@@ -107,10 +103,6 @@ def validation(option, rank, epoch, task_id, new_model, old_model, criterion, va
         if (rank == 0) or (rank == 'cuda'):
             print('Epoch-(%d/%d) - val_ACC@1: %.2f, val_ACC@5-%.2f, val_loss:%.3f' % (epoch, option.result['train']['total_epoch']-1, \
                                                                                     mean_acc1, mean_acc5, mean_loss))
-            neptune.log_metric('val_loss', mean_loss)
-            neptune.log_metric('val_acc1', mean_acc1)
-            neptune.log_metric('val_acc5', mean_acc5)
-
     result = {'acc1':mean_acc1, 'acc5':mean_acc5, 'val_loss':mean_loss}
     return result
 

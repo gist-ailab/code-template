@@ -1,13 +1,16 @@
 {
   "gpu": "1,2,3",
-  "resume": false,
+  "resume": true,
 
   "total_epoch": 200,
-  "lr": 1e-3,
-  "scheduler": null,
+  "lr": 0.1,
+  "scheduler": "cosine",
   "batch_size": 512,
 
-  "ddp": true,
+  "ddp": false,
   "pin_memory": true,
-  "mixed_precision": true
+  "mixed_precision": true,
+
+  "patience": 1000,
+  "save_epoch": 10
 }

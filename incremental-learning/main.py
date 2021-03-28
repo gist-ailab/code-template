@@ -14,6 +14,7 @@ from torchvision.models import resnet18
 from module import trainer
 from module.load_module import load_model, load_loss, load_optimizer, load_scheduler
 from utility.utils import config, train_module
+from utility.earlystop import EarlyStopping
 
 from data.dataset import load_data, IncrementalSet
 
@@ -31,7 +32,7 @@ def setup(rank, world_size):
 def cleanup():
     dist.destroy_process_group()
 
-def main(rank, option, task_id, resume, save_folder):
+def main(rank, option, task_id, save_folder):
     # Basic Options
     if task_id == 0:
         resume = False
@@ -50,13 +51,6 @@ def main(rank, option, task_id, resume, save_folder):
 
     scheduler = option.result['train']['scheduler']
     batch_size, pin_memory = option.result['train']['batch_size'], option.result['train']['pin_memory']
-
-
-    # Logger
-    if (rank == 0) or (rank == 'cuda'):
-        neptune.init('sunghoshin/imp', api_token='eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vdWkubmVwdHVuZS5haSIsImFwaV91cmwiOiJodHRwczovL3VpLm5lcHR1bmUuYWkiLCJhcGlfa2V5IjoiYzdlYWFkMjctOWExMS00YTRlLWI0MWMtY2FhNmIyNzZlYTIyIn0=')
-        exp_name, exp_num = save_folder.split('/')[-2], save_folder.split('/')[-1]
-        neptune.create_experiment(params={'exp_name':exp_name, 'exp_num':exp_num}, tags=[])
 
 
     # Load Model
@@ -104,8 +98,10 @@ def main(rank, option, task_id, resume, save_folder):
     # Optimizer and Scheduler
     optimizer = load_optimizer(option, new_model.parameters())
     if scheduler is not None:
-        scheduler = load_scheduler(option)
+        scheduler = load_scheduler(option, optimizer)
 
+    # Early Stopping
+    early = EarlyStopping(patience=option.result['train']['patience'])
 
     # Dataset and DataLoader
     if task_id == 0:
@@ -115,12 +111,13 @@ def main(rank, option, task_id, resume, save_folder):
         start = option.result['train']['num_init_segment'] + option.result['train']['num_segment'] * (task_id - 1)
         end = start + option.result['train']['num_segment']
 
-    target_list = list(range(start, end))
+    tr_target_list = list(range(start, end))
+    val_target_list = list(range(0, end))
 
     tr_dataset = load_data(option, data_type='train')
-    tr_dataset = IncrementalSet(tr_dataset, start, target_list=target_list)
+    tr_dataset = IncrementalSet(tr_dataset, start, target_list=tr_target_list)
     val_dataset = load_data(option, data_type='val')
-    val_dataset = IncrementalSet(val_dataset, start, target_list=target_list)
+    val_dataset = IncrementalSet(val_dataset, start, target_list=val_target_list)
 
     if ddp:
         tr_sampler = torch.utils.data.distributed.DistributedSampler(dataset=tr_dataset,
@@ -151,10 +148,11 @@ def main(rank, option, task_id, resume, save_folder):
     old_model.eval()
     for epoch in range(0, save_module.total_epoch):
         new_model.train()
-        new_model, optimizer, save_module = trainer.train(option, rank, epoch, task_id, new_model, old_model, criterion, optimizer, tr_loader, scaler, save_module, neptune)
+        new_model, optimizer, save_module = trainer.train(option, rank, epoch, task_id, new_model, old_model, \
+                                                          criterion, optimizer, tr_loader, scaler, save_module)
 
         new_model.eval()
-        result = trainer.validation(option, rank, epoch, task_id, new_model, old_model, criterion, val_loader, neptune)
+        result = trainer.validation(option, rank, epoch, task_id, new_model, old_model, criterion, val_loader)
 
         if scheduler is not None:
             scheduler.step()
@@ -162,13 +160,40 @@ def main(rank, option, task_id, resume, save_folder):
         else:
             save_module.save_dict['scheduler'] = None
 
+        # Early Stop
+        if multi_gpu:
+            param = deepcopy(new_model.module.state_dict())
+        else:
+            param = deepcopy(new_model.state_dict())
 
-    # Save the Result
-    save_module_path = os.path.join(save_folder, 'task_%d_dict.pt' %task_id)
-    save_module.export_module(save_module_path)
+        early(result['val_loss'], param, result)
+        if early.early_stop == True:
+            break
 
-    save_config_path = os.path.join(save_folder, 'task_%d_config.json' %task_id)
-    option.export_config(save_config_path)
+    if (rank == 'cuda') or (rank==0):
+        # Load the best model
+        best_param = early.model
+        best_result = early.result
+        save_module.save_dict['model'] = [best_param]
+
+        # Save the best result
+        val_acc1, val_acc5, val_loss = best_result['acc1'], best_result['acc5'], best_result['val_loss']
+
+        if task_id == 0:
+            mode = 'w'
+        else:
+            mode = 'a'
+
+        with open(os.path.join(save_folder, 'result.txt'), mode) as f:
+            f.write('task_%d - val_acc@1: %.2f, val_acc@5: %.2f, val_loss: %.3f \n' %(task_id, val_acc1, val_acc5, val_loss))
+
+        # Save the Module
+        save_module_path = os.path.join(save_folder, 'task_%d_dict.pt' %task_id)
+        save_module.export_module(save_module_path)
+
+        save_config_path = os.path.join(save_folder, 'task_%d_config.json' %task_id)
+        option.export_config(save_config_path)
+
 
     if ddp:
         cleanup()
@@ -207,6 +232,13 @@ if __name__=='__main__':
             option.import_config(config_path)
 
 
+    # Logger
+    neptune.init('sunghoshin/imp', api_token='eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vdWkubmVwdHVuZS5haSIsImFwaV91cmwiOiJodHRwczovL3VpLm5lcHR1bmUuYWkiLCJhcGlfa2V5IjoiYzdlYWFkMjctOWExMS00YTRlLWI0MWMtY2FhNmIyNzZlYTIyIn0=')
+    exp_name, exp_num = save_folder.split('/')[-2], save_folder.split('/')[-1]
+    neptune.create_experiment(params={'exp_name':exp_name, 'exp_num':exp_num},
+                              tags=[])
+
+
     # GPU
     os.environ["CUDA_VISIBLE_DEVICES"] = option.result['train']['gpu']
     num_gpu = len(option.result['train']['gpu'].split(','))
@@ -226,7 +258,22 @@ if __name__=='__main__':
 
     for task_id in range(resume_task_id, num_task):
         if ddp:
-            mp.spawn(main, args=(option, task_id, resume, save_folder,), nprocs=num_gpu, join=True)
+            mp.spawn(main, args=(option, task_id, save_folder, ), nprocs=num_gpu, join=True)
         else:
-            main('cuda', option, task_id, resume, save_folder,)
+            main('cuda', option, task_id, save_folder)
 
+        # Logging the result
+        with open(os.path.join(save_folder,'result.txt'), 'r') as f:
+            result_list = f.readlines()
+
+        result_line = result_list[-1]
+        start =[pos for pos, char in enumerate(result_line) if char == ':']
+        end =[pos for pos, char in enumerate(result_line) if char == ',']
+
+        acc1 = float(result_line[start[0]+1 : end[0]].strip())
+        acc5 = float(result_line[start[1]+1 : end[1]].strip())
+        val_loss = float(result_line[start[2]+1 : -1].strip())
+
+        neptune.log_metric('acc@1', task_id, acc1)
+        neptune.log_metric('acc@5', task_id, acc5)
+        neptune.log_metric('val_loss', task_id, val_loss)

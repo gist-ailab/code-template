@@ -13,9 +13,11 @@ from torchvision.models import resnet18
 from module import trainer
 from module.load_module import load_model, load_loss, load_optimizer, load_scheduler
 from utility.utils import config, train_module
+from utility.earlystop import EarlyStopping
 
 from data.dataset import load_data
 
+from copy import deepcopy
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -86,14 +88,16 @@ def main(rank, option, resume, save_folder):
 
         # Load Scheduler
         if scheduler is not None:
-            scheduler = load_scheduler(option)
+            scheduler = load_scheduler(option, optimizer)
             scheduler.load_state_dict(save_module.save_dict['scheduler'][0])
 
     else:
         optimizer = load_optimizer(option, model.parameters())
         if scheduler is not None:
-            scheduler = load_scheduler(option)
+            scheduler = load_scheduler(option, optimizer)
 
+    # Early Stopping
+    early = EarlyStopping(patience=option.result['train']['patience'])
 
     # Dataset and DataLoader
     tr_dataset = load_data(option, data_type='train')
@@ -125,7 +129,8 @@ def main(rank, option, resume, save_folder):
     # Training
     for epoch in range(save_module.init_epoch, save_module.total_epoch):
         model.train()
-        model, optimizer, save_module = trainer.train(option, rank, epoch, model, criterion, optimizer, tr_loader, scaler, save_module, neptune)
+        model, optimizer, save_module = trainer.train(option, rank, epoch, model, criterion, optimizer, \
+                                                      tr_loader, scaler, save_module, neptune, save_folder)
 
         model.eval()
         result = trainer.validation(option, rank, epoch, model, criterion, val_loader, neptune)
@@ -136,12 +141,31 @@ def main(rank, option, resume, save_folder):
         else:
             save_module.save_dict['scheduler'] = None
 
-        # Save the Result
-        save_module_path = os.path.join(save_folder, 'last_dict.pt')
-        save_module.export_module(save_module_path)
 
-        save_config_path = os.path.join(save_folder, 'last_config.json')
-        option.export_config(save_config_path)
+        # Save the last-epoch module
+        if (rank == 0) or (rank == 'cuda'):
+            save_module_path = os.path.join(save_folder, 'last_dict.pt')
+            save_module.export_module(save_module_path)
+
+            save_config_path = os.path.join(save_folder, 'last_config.json')
+            option.export_config(save_config_path)
+
+
+        # Early Stopping
+        if multi_gpu:
+            param = deepcopy(model.module.state_dict())
+        else:
+            param = deepcopy(model.state_dict())
+
+        early(result['val_loss'], param, result)
+        if early.early_stop == True:
+            break
+
+
+    if (rank == 0) or (rank == 'cuda'):
+        # Save the best_model
+        torch.save(early.model, os.path.join(save_folder, 'best_model.pt'))
+
 
     if ddp:
         cleanup()

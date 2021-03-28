@@ -39,19 +39,20 @@ if __name__=='__main__':
     # Setup Configuration for Each Experiments
     if args.exp == 1:
         server = 'hinton'
-        save_dir = '/data/sung/checkpoint'
-        exp_name = 'imp3'
+        save_dir = '/data/sung/checkpoint/CL'
+        exp_name = 'test1'
         start = 0
         ix = 0
         comb_list = []
 
         num_per_gpu = 1
-        gpus = ['0,1,3']
-        epoch_list = [2]
+        gpus = ['4,5,6']
+        epoch_list = [100]
 
         for epoch in epoch_list:
             comb_list.append([epoch, ix])
             ix += 1
+
     else:
         raise('Select Proper Experiment Number')
 

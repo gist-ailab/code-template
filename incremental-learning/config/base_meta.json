@@ -1,4 +1,4 @@
 {
   "server": "hinton",
-  "save_dir": "/HDD1/sung/checkpoint"
+  "save_dir": "/HDD1/sung/checkpoint/incremental_learning"
 }
