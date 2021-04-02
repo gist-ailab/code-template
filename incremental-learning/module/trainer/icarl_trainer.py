@@ -2,6 +2,8 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from utility.distributed import apply_gradient_allreduce, reduce_tensor
+from torch.autograd import Variable
+from copy import deepcopy
 
 def accuracy(output, target, topk=(1,)):
     """Computes the accuracy over the k top predictions for the specified values of k"""
@@ -37,14 +39,32 @@ def train(option, rank, epoch, task_id, new_model, old_model, criterion, optimiz
         if scaler is not None:
             with torch.cuda.amp.autocast():
                 output = new_model(input)
-                loss = criterion(output, label)
+
+                if task_id == 0:
+                    loss = criterion(output, label)
+
+                else:
+                    output_old = old_model(input)
+                    output_old = output_old.data
+                    output_old = Variable(output_old).to(rank)
+                    output_old.requires_grad = False
+                    loss = criterion(output, label) + criterion.forward_distill(output_old, output)
 
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
         else:
             output = new_model(input)
-            loss = criterion(output, label)
+
+            if task_id == 0:
+                loss = criterion(output, label)
+
+            else:
+                output_old = old_model(input)
+                output_old = output_old.data
+                output_old = Variable(output_old).to(rank)
+                output_old.requires_grad = False
+                loss = criterion(output, label) + criterion.forward_distill(output_old, output)
 
             loss.backward()
             optimizer.step()
@@ -84,6 +104,7 @@ def train(option, rank, epoch, task_id, new_model, old_model, criterion, optimiz
 
 def validation(option, rank, epoch, task_id, new_model, old_model, criterion, val_loader):
     num_gpu = len(option.result['train']['gpu'].split(','))
+    multi_gpu = num_gpu > 1
 
     # For Log
     mean_loss = 0.
@@ -95,25 +116,27 @@ def validation(option, rank, epoch, task_id, new_model, old_model, criterion, va
             input, label = val_data
             input, label = input.to(rank), label.to(rank)
 
-            output = new_model(input)
-            loss = criterion(output, label)
+            if task_id == 0:
+                output = new_model(input)
+            else:
+                if multi_gpu:
+                    output = new_model.module.icarl_classify(input)
+                else:
+                    output = new_model.icarl_classify(input)
 
             acc_result = accuracy(output, label, topk=(1, 5))
 
             if (num_gpu > 1) and (option.result['train']['ddp']):
-                mean_loss += reduce_tensor(loss.data, num_gpu).item()
                 mean_acc1 += reduce_tensor(acc_result[0], num_gpu)
                 mean_acc5 += reduce_tensor(acc_result[1], num_gpu)
 
             else:
-                mean_loss += loss.item()
                 mean_acc1 += acc_result[0]
                 mean_acc5 += acc_result[1]
 
         # Train Result
         mean_acc1 /= len(val_loader)
         mean_acc5 /= len(val_loader)
-        mean_loss /= len(val_loader)
 
         # Logging
         if (rank == 0) or (rank == 'cuda'):

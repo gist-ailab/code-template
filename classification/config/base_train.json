@@ -12,5 +12,6 @@
   "mixed_precision": false,
 
   "patience": 1000,
+  "early_loss": true,
   "save_epoch": 10
 }

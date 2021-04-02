@@ -134,6 +134,7 @@ def validation(option, rank, epoch, model, criterion, val_loader, neptune):
             neptune.log_metric('val_loss', mean_loss)
             neptune.log_metric('val_acc1', mean_acc1)
             neptune.log_metric('val_acc5', mean_acc5)
+            neptune.log_metric('epoch', epoch)
 
     result = {'acc1':mean_acc1, 'acc5':mean_acc5, 'val_loss':mean_loss}
     return result

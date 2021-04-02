@@ -52,7 +52,8 @@ def main(rank, option, resume, save_folder):
     if (rank == 0) or (rank == 'cuda'):
         neptune.init('sunghoshin/imp', api_token='eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vdWkubmVwdHVuZS5haSIsImFwaV91cmwiOiJodHRwczovL3VpLm5lcHR1bmUuYWkiLCJhcGlfa2V5IjoiYzdlYWFkMjctOWExMS00YTRlLWI0MWMtY2FhNmIyNzZlYTIyIn0=')
         exp_name, exp_num = save_folder.split('/')[-2], save_folder.split('/')[-1]
-        neptune.create_experiment(params={'exp_name':exp_name, 'exp_num':exp_num}, tags=[])
+        neptune.create_experiment(params={'exp_name':exp_name, 'exp_num':exp_num},
+                                  tags=['inference:False'])
 
     # Load Model
     model = load_model(option)
@@ -159,7 +160,11 @@ def main(rank, option, resume, save_folder):
         else:
             param = deepcopy(model.state_dict())
 
-        early(result['val_loss'], param, result)
+        if option.result['train']['early_loss']:
+            early(result['val_loss'], param, result)
+        else:
+            early(-result['acc1'], param, result)
+
         if early.early_stop == True:
             break
 
@@ -196,8 +201,12 @@ if __name__=='__main__':
         if (os.path.isfile(resume_path) == False) or (os.path.isfile(config_path) == False):
             resume = False
         else:
+            gpu = option.result['train']['gpu']
+
             option = config(save_folder)
             option.import_config(config_path)
+
+            option.result['train']['gpu'] = gpu
 
     # Data Directory
     option.result['data']['data_dir'] = os.path.join(option.result['data']['data_dir'], option.result['data']['data_type'])

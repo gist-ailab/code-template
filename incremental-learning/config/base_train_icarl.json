@@ -1,23 +1,25 @@
 {
   "gpu": "0,1,2",
   "only_init": false,
-  "resume": true,
-  "resume_task_id": 1,
+  "resume": false,
+  "resume_task_id": 0,
 
   "train_type": "icarl",
   "pretrain_new_model": true,
-  "num_init_segment": 50,
+  "num_init_segment": 10,
   "num_segment": 10,
   "num_exemplary": 2000,
 
-  "total_epoch": 100,
-  "lr": 0.1,
-  "scheduler": "cosine",
+  "optimizer": "adam",
+  "total_epoch": 80,
+  "lr": 0.002,
+  "scheduler": null,
   "batch_size": 512,
 
   "ddp": false,
   "pin_memory": true,
   "mixed_precision": false,
 
-  "patience": 10
+  "patience": 10000,
+  "early_loss": false
 }

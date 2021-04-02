@@ -18,6 +18,7 @@ def save_json(json_data, json_path):
 if __name__=='__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--exp', type=int, default=1)
+    parser.add_argument('--log', type=lambda x: x.lower()=='true', default=True)
     args = parser.parse_args()
 
     # Data Configuration
@@ -28,10 +29,6 @@ if __name__=='__main__':
     json_network_path = '../config/base_network.json'
     json_network = load_json(json_network_path)
 
-    # Train Configuration
-    json_train_path = '../config/base_train.json'
-    json_train = load_json(json_train_path)
-
     # Meta Configuration
     json_meta_path = '../config/base_meta.json'
     json_meta = load_json(json_meta_path)
@@ -39,21 +36,23 @@ if __name__=='__main__':
     # Setup Configuration for Each Experiments
     if args.exp == 1:
         server = 'nipa'
-        save_dir = '/home/sung/checkpoint/cl'
+        save_dir = '/home/sung/checkpoint/icarl'
         data_dir = '/home/sung/dataset'
-        data_type = 'cifar100'
+        data_type_and_num = ('cifar100', 100)
 
         exp_name = 'imp'
         start = 0
         comb_list = []
 
         num_per_gpu = 1
-        gpus = ['0,1,2']
-        epoch_list = [1]
+        gpus = ['0,1,2', '0,1,2']
+        train_list = ['icarl', 'naive']
+        resume = False
+        resume_task_id = 0
 
         ix = 0
-        for epoch in epoch_list:
-            comb_list.append([epoch, ix])
+        for tr in train_list:
+            comb_list.append([tr, ix])
             ix += 1
     else:
         raise('Select Proper Experiment Number')
@@ -76,7 +75,8 @@ if __name__=='__main__':
 
             # Modify the data configuration
             json_data['data_dir'] = str(data_dir)
-            json_data['data_type'] = str(data_type)
+            json_data['data_type'] = data_type_and_num[0]
+            json_data['num_class'] = data_type_and_num[1]
             save_json(json_data, os.path.join(save_dir, exp_name, str(exp_num), 'data.json'))
 
             # Modify the network configuration
@@ -84,7 +84,12 @@ if __name__=='__main__':
             save_json(json_network, os.path.join(save_dir, exp_name, str(exp_num), 'network.json'))
 
             # Modify the train configuration
-            json_train['total_epoch'] = int(comb_ix[0])
+            train_type = str(comb_ix[0])
+            json_train_path = '../config/base_train_%s.json' %train_type
+            json_train = load_json(json_train_path)
+
+            json_train['resume'] = resume
+            json_train['resume_task_id'] = resume_task_id
             json_train['gpu'] = str(gpu)
             save_json(json_train, os.path.join(save_dir, exp_name, str(exp_num), 'train.json'))
 
@@ -94,7 +99,7 @@ if __name__=='__main__':
             save_json(json_meta, os.path.join(save_dir, exp_name, str(exp_num), 'meta.json'))
 
             # Run !
-            script = 'python ../main.py --save_dir %s --exp_name %s --exp_num %d' %(save_dir, exp_name, exp_num) \
+            script = 'python ../main.py --save_dir %s --exp_name %s --exp_num %d --log %s' %(save_dir, exp_name, exp_num, str(args.log)) \
 
             subprocess.call(script, shell=True)
 

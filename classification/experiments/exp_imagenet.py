@@ -11,9 +11,11 @@ def load_json(json_path):
         out = json.load(f)
     return out
 
+
 def save_json(json_data, json_path):
     with open(json_path, 'w') as f:
         json.dump(json_data, f)
+
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser()
@@ -41,7 +43,7 @@ if __name__=='__main__':
         server = 'nipa'
         save_dir = '/home/sung/checkpoint/CL'
         data_dir = '/home/sung/dataset'
-        data_type = 'cifar100'
+        data_type_and_num = ('cifar10', 10)
 
         exp_name = 'test1'
         start = 0
@@ -77,7 +79,8 @@ if __name__=='__main__':
 
             # Modify the data configuration
             json_data['data_dir'] = data_dir
-            json_data['data_type'] = data_type
+            json_data['data_type'] = data_type_and_num[0]
+            json_data['num_class'] = data_type_and_num[1]
             save_json(json_data, os.path.join(save_dir, exp_name, str(exp_num), 'data.json'))
 
             # Modify the network configuration

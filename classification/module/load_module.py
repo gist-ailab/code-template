@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 from torchvision.models.resnet import resnet18
 
-def load_model(option):
-    model = resnet18(pretrained=False)
+def load_model(option, num_class):
+    model = resnet18(pretrained=False, num_classes=num_class)
     return model
 
 def load_optimizer(option, param):
