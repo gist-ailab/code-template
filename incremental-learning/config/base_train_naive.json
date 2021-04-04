@@ -10,16 +10,18 @@
   "num_segment": 10,
   "num_exemplary": 0,
 
-  "optimizer": "adam",
-  "total_epoch": 80,
-  "lr": 0.002,
-  "scheduler": null,
-  "batch_size": 512,
+  "optimizer": "sgd",
+  "weight_decay": 0.00005,
+  "lr": 2.0,
+
+  "total_epoch": 70,
+  "scheduler": "step",
+  "batch_size": 128,
 
   "ddp": false,
   "pin_memory": true,
   "mixed_precision": false,
 
   "patience": 10000,
-  "early_loss": false
+  "early_criterion_loss": false
 }

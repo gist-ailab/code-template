@@ -40,19 +40,21 @@ if __name__=='__main__':
         data_dir = '/home/sung/dataset'
         data_type_and_num = ('cifar100', 100)
 
-        exp_name = 'imp'
+        exp_name = 'num_exemple'
         start = 0
         comb_list = []
 
         num_per_gpu = 1
-        gpus = ['0,1,2', '0,1,2']
-        train_list = ['icarl', 'naive']
+        gpus = ['0', '1', '2']
+        train_list = ['icarl']
+        num_exemple_list = [500, 2000, 4000]
         resume = False
         resume_task_id = 0
 
         ix = 0
         for tr in train_list:
-            comb_list.append([tr, ix])
+            for num_ex in num_exemple_list:
+                comb_list.append([tr, num_ex, ix])
             ix += 1
     else:
         raise('Select Proper Experiment Number')
@@ -91,6 +93,7 @@ if __name__=='__main__':
             json_train['resume'] = resume
             json_train['resume_task_id'] = resume_task_id
             json_train['gpu'] = str(gpu)
+            json_train['num_exemplary'] = int(comb_ix[1])
             save_json(json_train, os.path.join(save_dir, exp_name, str(exp_num), 'train.json'))
 
             # Modify the meta configuration

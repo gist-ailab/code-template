@@ -64,7 +64,7 @@ def main(rank, option, task_id, save_folder):
         old_class = calc_num_class(task_id - 1)
 
     old_model = load_model(option, old_class)
-    criterion = load_loss(option)
+    criterion = load_loss(option, old_class, new_class)
 
     if resume:
         save_module = train_module(total_epoch, old_model, criterion, multi_gpu)
@@ -75,9 +75,10 @@ def main(rank, option, task_id, save_folder):
     # New Model
     if option.result['train']['pretrain_new_model'] and task_id > 0:
         new_model = deepcopy(old_model)
-        new_model.model_fc = nn.Linear(new_model.model_fc.in_features, new_class)
+        new_model.model_fc = nn.Linear(new_model.model_fc.in_features, new_class, bias=True)
         new_model.model_fc.weight.data[:old_class] = old_model.model_fc.weight.data
         new_model.model_fc.bias.data[:old_class] = old_model.model_fc.bias.data
+
     else:
         new_model = load_model(option, new_class)
 
@@ -86,7 +87,6 @@ def main(rank, option, task_id, save_folder):
     # Load Old Exemplary Samples
     if (option.result['train']['num_exemplary'] > 0) and (task_id > 0):
         new_model.exemplar_list = torch.load(os.path.join(save_folder, 'task_%d_exemplar.pt' %(task_id-1)))
-
     else:
         new_model.exemplar_list = []
 
@@ -138,7 +138,8 @@ def main(rank, option, task_id, save_folder):
     val_target_list = list(range(0, end))
 
     tr_dataset = load_data(option, data_type='train')
-    tr_dataset = IncrementalSet(tr_dataset, start, target_list=tr_target_list, shuffle_label=True)
+    ex_dataset = load_data(option, data_type='exemplar')
+    tr_dataset = IncrementalSet(tr_dataset, ex_dataset, start, target_list=tr_target_list, shuffle_label=True)
 
     if (task_id > 0) and (option.result['train']['num_exemplary'] > 0):
         if multi_gpu:
@@ -148,7 +149,7 @@ def main(rank, option, task_id, save_folder):
 
     # Validation Set
     val_dataset = load_data(option, data_type='val')
-    val_dataset = IncrementalSet(val_dataset, start, target_list=val_target_list, shuffle_label=False)
+    val_dataset = IncrementalSet(val_dataset, ex_dataset, start, target_list=val_target_list, shuffle_label=False)
 
     if ddp:
         tr_sampler = torch.utils.data.distributed.DistributedSampler(dataset=tr_dataset,
@@ -200,7 +201,7 @@ def main(rank, option, task_id, save_folder):
             else:
                 param = deepcopy(new_model.state_dict())
 
-            if option.result['train']['early_loss']:
+            if option.result['train']['early_criterion_loss']:
                 early(result['val_loss'], param, result)
             else:
                 early(-result['acc1'], param, result)
@@ -218,30 +219,8 @@ def main(rank, option, task_id, save_folder):
             new_model, optimizer, save_module = icarl_trainer.train(option, rank, epoch, task_id, new_model, old_model, \
                                                                     criterion, optimizer, tr_loader, scaler, save_module)
 
-            # Update Exemplary Set Temporarily
-            m = int(option.result['train']['num_exemplary'] / old_class)
-            if task_id > 0:
-                if multi_gpu:
-                    new_model.module.exemplar_list = new_model.module.exemplar_list[:old_class]
-                else:
-                    new_model.exemplar_list = new_model.exemplar_list[:old_class]
-
-                for n in tr_target_list:
-                    n_data = tr_dataset.get_image_class(n)
-                    if multi_gpu:
-                        new_model.module.get_new_exemplar(n_data, m, rank)
-                    else:
-                        new_model.get_new_exemplar(n_data, m, rank)
-
             # Validate
             new_model.eval()
-
-            if task_id > 0:
-                if multi_gpu:
-                    new_model.module.update_center(rank)
-                else:
-                    new_model.update_center(rank)
-
             result = icarl_trainer.validation(option, rank, epoch, task_id, new_model, old_model, criterion, val_loader)
 
             if scheduler is not None:
@@ -256,7 +235,7 @@ def main(rank, option, task_id, save_folder):
             else:
                 param = deepcopy(new_model.state_dict())
 
-            if option.result['train']['early_loss']:
+            if option.result['train']['early_criterion_loss']:
                 early(result['val_loss'], param, result)
             else:
                 early(-result['acc1'], param, result)
@@ -264,22 +243,36 @@ def main(rank, option, task_id, save_folder):
             if early.early_stop == True:
                 break
 
-        # Save Exemplary
-        if (option.result['train']['num_exemplary'] > 0) and ((rank == 0) or (rank == 'cuda')):
-            m = int(option.result['train']['num_exemplary'] / new_class)
-            if task_id == 0:
-                if multi_gpu:
-                    new_model.module.exemplar_list = []
-                else:
-                    new_model.exemplar_list = []
 
+        # After training
+        del old_model, new_model
+
+        if (option.result['train']['num_exemplary'] > 0) and ((rank == 0) or (rank == 'cuda')):
+            # Load Best Models
+            new_model = load_model(option, new_class)
+            new_model.load_state_dict(early.model)
+            if (option.result['train']['num_exemplary'] > 0) and (task_id > 0):
+                new_model.exemplar_list = torch.load(os.path.join(save_folder, 'task_%d_exemplar.pt' % (task_id - 1)))
+            else:
+                new_model.exemplar_list = []
+
+            # Multi-Processing GPUs
+            if ddp:
+                new_model.to(rank)
+                new_model = DDP(new_model, device_ids=[rank])
             else:
                 if multi_gpu:
-                    new_model.module.exemplar_list = new_model.module.exemplar_list[:old_class]
-                    new_model.module.reduce_old_exemplar(m)
+                    new_model = nn.DataParallel(new_model).to(rank)
                 else:
-                    new_model.exemplar_list = new_model.exemplar_list[:old_class]
-                    new_model.reduce_old_exemplar(m)
+                    new_model = new_model.to(rank)
+
+            # Save Exemplary Sets
+            m = int(option.result['train']['num_exemplary'] / new_class)
+            if multi_gpu:
+                new_model.module.reduce_old_exemplar(m)
+            else:
+                new_model.reduce_old_exemplar(m)
+
 
             for n in tr_target_list:
                 n_data = tr_dataset.get_image_class(n)
@@ -293,65 +286,10 @@ def main(rank, option, task_id, save_folder):
             else:
                 torch.save(new_model.exemplar_list, os.path.join(save_folder, 'task_%d_exemplar.pt' %(task_id)))
 
-
-    elif option.result['train']['train_type'] == 'wo_exemple':
-        from module.trainer import naive_trainer
-        from module.trainer import wo_exemple_trainer
-
-        if task_id > 0:
-            # Load Discriminator
-            if ddp:
-                discriminator = nn.Linear(new_model.module.model_fc.in_features, 2)
-                discriminator.to(rank)
-
-                discriminator = DDP(discriminator, device_ids=[rank])
-                discriminator = apply_gradient_allreduce(discriminator)
-
-            else:
-                if multi_gpu:
-                    discriminator = nn.Linear(new_model.module.model_fc.in_features, 2)
-                    discriminator = nn.DataParallel(discriminator).to(rank)
-                else:
-                    discriminator = nn.Linear(new_model.model_fc.in_features, 2)
-                    discriminator = discriminator.to(rank)
-
-            optimizer_D = load_optimizer(option, discriminator.parameters())
-
-
-        # Training
-        old_model.eval()
-        for epoch in range(0, save_module.total_epoch):
-            new_model.train()
-
-            if task_id > 0:
-                new_model, discriminator, optimizer, optimizer_D, save_module = wo_exemple_trainer.train(option, rank, epoch, task_id, new_model, old_model, discriminator, \
-                                                                                                        criterion, optimizer, optimizer_D, tr_loader, scaler, save_module)
-            else:
-                new_model, optimizer, save_module = naive_trainer.train(option, rank, epoch, task_id, new_model, old_model,
-                                                                        criterion, optimizer, tr_loader, scaler, save_module)
-
+            # Final Validation
             new_model.eval()
-            result = wo_exemple_trainer.validation(option, rank, epoch, task_id, new_model, old_model, criterion, val_loader)
-
-            if scheduler is not None:
-                scheduler.step()
-                save_module.save_dict['scheduler'] = [scheduler.state_dict()]
-            else:
-                save_module.save_dict['scheduler'] = None
-
-            # Early Stop
-            if multi_gpu:
-                param = deepcopy(new_model.module.state_dict())
-            else:
-                param = deepcopy(new_model.state_dict())
-
-            if option.result['train']['early_loss']:
-                early(result['val_loss'], param, result)
-            else:
-                early(-result['acc1'], param, result)
-
-            if early.early_stop == True:
-                break
+            result = icarl_trainer.test(option, rank, new_model, val_loader)
+            early.result = result
 
     else:
         raise('select proper train_type')

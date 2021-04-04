@@ -34,6 +34,7 @@ def train(option, rank, epoch, task_id, new_model, old_model, criterion, optimiz
     for tr_data in tqdm(tr_loader):
         input, label = tr_data
         input, label = input.to(rank), label.to(rank)
+
         optimizer.zero_grad()
 
         if scaler is not None:
@@ -44,11 +45,11 @@ def train(option, rank, epoch, task_id, new_model, old_model, criterion, optimiz
                     loss = criterion(output, label)
 
                 else:
-                    output_old = old_model(input)
-                    output_old = output_old.data
+                    with torch.no_grad():
+                        output_old = old_model(input)
+                        output_old = output_old.data
                     output_old = Variable(output_old).to(rank)
-                    output_old.requires_grad = False
-                    loss = criterion(output, label) + criterion.forward_distill(output_old, output)
+                    loss = criterion(output, label, output_old)
 
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
@@ -60,11 +61,11 @@ def train(option, rank, epoch, task_id, new_model, old_model, criterion, optimiz
                 loss = criterion(output, label)
 
             else:
-                output_old = old_model(input)
-                output_old = output_old.data
+                with torch.no_grad():
+                    output_old = old_model(input)
+                    output_old = output_old.data
                 output_old = Variable(output_old).to(rank)
-                output_old.requires_grad = False
-                loss = criterion(output, label) + criterion.forward_distill(output_old, output)
+                loss = criterion(output, label, output_old)
 
             loss.backward()
             optimizer.step()
@@ -116,14 +117,7 @@ def validation(option, rank, epoch, task_id, new_model, old_model, criterion, va
             input, label = val_data
             input, label = input.to(rank), label.to(rank)
 
-            if task_id == 0:
-                output = new_model(input)
-            else:
-                if multi_gpu:
-                    output = new_model.module.icarl_classify(input)
-                else:
-                    output = new_model.icarl_classify(input)
-
+            output = new_model(input)
             acc_result = accuracy(output, label, topk=(1, 5))
 
             if (num_gpu > 1) and (option.result['train']['ddp']):
@@ -145,5 +139,71 @@ def validation(option, rank, epoch, task_id, new_model, old_model, criterion, va
     result = {'acc1':mean_acc1, 'acc5':mean_acc5, 'val_loss':mean_loss}
     return result
 
-def test():
-    pass
+
+def test(option, rank, new_model, val_loader):
+    num_gpu = len(option.result['train']['gpu'].split(','))
+    multi_gpu = num_gpu > 1
+
+    if multi_gpu:
+        new_model.module.update_center(rank)
+    else:
+        new_model.update_center(rank)
+
+    # For Log
+    mean_loss = 0.
+    mean_acc1 = 0.
+    mean_acc5 = 0.
+
+    for img, label in val_loader:
+        img, label = img.to(rank), label.to(rank)
+        with torch.no_grad():
+            if multi_gpu:
+                output = new_model.module.icarl_classify(img)
+            else:
+                output = new_model.icarl_classify(img)
+
+        acc_result = accuracy(output.cpu(), label.cpu(), topk=(1, 5))
+        mean_acc1 += acc_result[0]
+        mean_acc5 += acc_result[1]
+
+    # Train Result
+    mean_acc1 /= len(val_loader)
+    mean_acc5 /= len(val_loader)
+
+    print('Final Result - val_ACC@1: %.2f, val_ACC@5-%.2f, val_loss:%.3f' % (mean_acc1, mean_acc5, mean_loss))
+    result = {'acc1':mean_acc1, 'acc5':mean_acc5, 'val_loss':mean_loss}
+    return result
+
+# def test(option, rank, new_model, val_loader):
+#     num_gpu = len(option.result['train']['gpu'].split(','))
+#
+#     # For Log
+#     mean_loss = 0.
+#     mean_acc1 = 0.
+#     mean_acc5 = 0.
+#
+#     with torch.no_grad():
+#         for val_data in tqdm(val_loader):
+#             input, label = val_data
+#             input, label = input.to(rank), label.to(rank)
+#
+#             output = new_model(input)
+#             acc_result = accuracy(output, label, topk=(1, 5))
+#
+#             if (num_gpu > 1) and (option.result['train']['ddp']):
+#                 mean_acc1 += reduce_tensor(acc_result[0], num_gpu)
+#                 mean_acc5 += reduce_tensor(acc_result[1], num_gpu)
+#
+#             else:
+#                 mean_acc1 += acc_result[0]
+#                 mean_acc5 += acc_result[1]
+#
+#         # Train Result
+#         mean_acc1 /= len(val_loader)
+#         mean_acc5 /= len(val_loader)
+#
+#         # Logging
+#         if (rank == 0) or (rank == 'cuda'):
+#             print('Final Result - val_ACC@1: %.2f, val_ACC@5-%.2f, val_loss:%.3f' % (mean_acc1, mean_acc5, mean_loss))
+#     result = {'acc1':mean_acc1, 'acc5':mean_acc5, 'val_loss':mean_loss}
+#     return result
