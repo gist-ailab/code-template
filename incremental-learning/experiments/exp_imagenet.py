@@ -40,14 +40,15 @@ if __name__=='__main__':
         data_dir = '/home/sung/dataset'
         data_type_and_num = ('cifar100', 100)
 
-        exp_name = 'num_exemple'
+        exp_name = 'early_stop_ex'
         start = 0
         comb_list = []
 
         num_per_gpu = 1
-        gpus = ['0', '1', '2']
+        gpus = ['0', '1', '1', '2']
         train_list = ['icarl']
-        num_exemple_list = [500, 2000, 4000]
+        num_exemple_list = [100, 500, 1000, 2000]
+        optimizer_type = 'sgd'
         resume = False
         resume_task_id = 0
 
@@ -55,7 +56,7 @@ if __name__=='__main__':
         for tr in train_list:
             for num_ex in num_exemple_list:
                 comb_list.append([tr, num_ex, ix])
-            ix += 1
+                ix += 1
     else:
         raise('Select Proper Experiment Number')
 
@@ -81,9 +82,11 @@ if __name__=='__main__':
             json_data['num_class'] = data_type_and_num[1]
             save_json(json_data, os.path.join(save_dir, exp_name, str(exp_num), 'data.json'))
 
+
             # Modify the network configuration
             json_network
             save_json(json_network, os.path.join(save_dir, exp_name, str(exp_num), 'network.json'))
+
 
             # Modify the train configuration
             train_type = str(comb_ix[0])
@@ -95,6 +98,13 @@ if __name__=='__main__':
             json_train['gpu'] = str(gpu)
             json_train['num_exemplary'] = int(comb_ix[1])
             save_json(json_train, os.path.join(save_dir, exp_name, str(exp_num), 'train.json'))
+
+
+            # Modify the optimizer configuration
+            json_optim_path = '../config/base_optim_%s.json' %optimizer_type
+            json_optim = load_json(json_optim_path)
+            save_json(json_optim, os.path.join(save_dir, exp_name, str(exp_num), 'optim.json'))
+
 
             # Modify the meta configuration
             json_meta['server'] = str(server)

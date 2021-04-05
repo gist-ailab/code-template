@@ -7,7 +7,7 @@ from copy import deepcopy
 import torch
 
 def load_model(option, num_class):
-    model_enc = resnet32_cbam()
+    model_enc = resnet18_cbam(pretrained=False)
     model_fc = nn.Linear(model_enc.num_feature, num_class, bias=True)
 
     if option.result['train']['train_type'] == 'icarl':
@@ -18,25 +18,25 @@ def load_model(option, num_class):
     return model
 
 def load_optimizer(option, params):
-    optimizer = option.result['train']['optimizer']
-    lr = option.result['train']['lr']
-    weight_decay = option.result['train']['weight_decay']
+    optimizer = option.result['optim']['optimizer']
+    lr = option.result['optim']['lr']
+    weight_decay = option.result['optim']['weight_decay']
 
     if optimizer == "adam":
         return torch.optim.Adam(params, lr=lr, weight_decay=weight_decay)
     elif optimizer == "adamw":
         return torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay)
     elif optimizer == "sgd":
-        return torch.optim.SGD(params, lr=lr, weight_decay=weight_decay)
-    elif optimizer == "sgd_nesterov":
-        return torch.optim.SGD(params, lr=lr, weight_decay=weight_decay, momentum=0.9, nesterov=True)
+        return torch.optim.SGD(params, lr=lr, weight_decay=weight_decay, momentum = option.result['optim']['momentum'])
+    else:
+        raise('Selec proper optimizer')
 
 
 def load_scheduler(option, optimizer):
     if option.result['train']['scheduler'] == 'cosine':
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=option.result['train']['total_epoch'])
     elif option.result['train']['scheduler'] == 'step':
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[48, 63], gamma=0.2)
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[48, 62, 80], gamma=0.2)
     elif option.result['train']['scheduler'] is None:
         scheduler = None
     else:

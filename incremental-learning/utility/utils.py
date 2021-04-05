@@ -19,6 +19,10 @@ class config():
         config_train = self.load_json(os.path.join(self.config_dir, 'train.json'))
         self.result['train'] = config_train
 
+    def get_config_optimizer(self):
+        config_optim = self.load_json(os.path.join(self.config_dir, 'optim.json'))
+        self.result['optim'] = config_optim
+
     def load_json(self, json_path):
         with open(json_path, 'r') as f:
             out = json.load(f)

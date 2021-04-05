@@ -47,6 +47,11 @@ def main(rank, option, task_id, save_folder):
     scheduler = option.result['train']['scheduler']
     batch_size, pin_memory = option.result['train']['batch_size'], option.result['train']['pin_memory']
 
+    # Early Stop
+    early_stop = option.result['train']['early']
+    if early_stop == False:
+        option.result['train']['patience'] = 100000
+
 
     # Load Model
     def calc_num_class(task_id):
@@ -164,7 +169,7 @@ def main(rank, option, task_id, save_folder):
                                                   shuffle=False, num_workers=4*num_gpu, pin_memory=pin_memory,
                                                   sampler=val_sampler)
     else:
-        tr_loader = DataLoader(tr_dataset, batch_size=batch_size, shuffle=True, pin_memory=pin_memory, num_workers=4*num_gpu)
+        tr_loader = DataLoader(tr_dataset, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=4*num_gpu)
         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=4*num_gpu)
 
 
@@ -209,6 +214,8 @@ def main(rank, option, task_id, save_folder):
             if early.early_stop == True:
                 break
 
+            if early_stop == False:
+                early.result = result
 
     elif option.result['train']['train_type'] == 'icarl':
         from module.trainer import icarl_trainer
@@ -245,34 +252,37 @@ def main(rank, option, task_id, save_folder):
 
 
         # After training
-        del old_model, new_model
-
         if (option.result['train']['num_exemplary'] > 0) and ((rank == 0) or (rank == 'cuda')):
-            # Load Best Models
-            new_model = load_model(option, new_class)
-            new_model.load_state_dict(early.model)
-            if (option.result['train']['num_exemplary'] > 0) and (task_id > 0):
-                new_model.exemplar_list = torch.load(os.path.join(save_folder, 'task_%d_exemplar.pt' % (task_id - 1)))
-            else:
-                new_model.exemplar_list = []
+            if early_stop:
+                # Load Best Models
+                del old_model, new_model
 
-            # Multi-Processing GPUs
-            if ddp:
-                new_model.to(rank)
-                new_model = DDP(new_model, device_ids=[rank])
-            else:
-                if multi_gpu:
-                    new_model = nn.DataParallel(new_model).to(rank)
+                new_model = load_model(option, new_class)
+                new_model.load_state_dict(early.model)
+                if (option.result['train']['num_exemplary'] > 0) and (task_id > 0):
+                    new_model.exemplar_list = torch.load(os.path.join(save_folder, 'task_%d_exemplar.pt' % (task_id - 1)))
                 else:
-                    new_model = new_model.to(rank)
+                    new_model.exemplar_list = []
+
+                # Multi-Processing GPUs
+                if ddp:
+                    new_model.to(rank)
+                    new_model = DDP(new_model, device_ids=[rank])
+                else:
+                    if multi_gpu:
+                        new_model = nn.DataParallel(new_model).to(rank)
+                    else:
+                        new_model = new_model.to(rank)
+
 
             # Save Exemplary Sets
             m = int(option.result['train']['num_exemplary'] / new_class)
-            if multi_gpu:
-                new_model.module.reduce_old_exemplar(m)
-            else:
-                new_model.reduce_old_exemplar(m)
 
+            if task_id > 0:
+                if multi_gpu:
+                    new_model.module.reduce_old_exemplar(m)
+                else:
+                    new_model.reduce_old_exemplar(m)
 
             for n in tr_target_list:
                 n_data = tr_dataset.get_image_class(n)
@@ -298,9 +308,11 @@ def main(rank, option, task_id, save_folder):
     # Saver
     if (rank == 'cuda') or (rank==0):
         # Load the best model
-        best_param = early.model
         best_result = early.result
-        save_module.save_dict['model'] = [best_param]
+
+        if early_stop:
+            best_param = early.model
+            save_module.save_dict['model'] = [best_param]
 
         # Save the best result
         val_acc1, val_acc5, val_loss = best_result['acc1'], best_result['acc5'], best_result['val_loss']
@@ -339,6 +351,7 @@ if __name__=='__main__':
     option.get_config_data()
     option.get_config_network()
     option.get_config_train()
+    option.get_config_optimizer()
 
     # Resume Configuration
     resume = option.result['train']['resume']
