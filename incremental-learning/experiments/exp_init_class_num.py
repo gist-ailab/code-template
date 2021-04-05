@@ -40,19 +40,20 @@ if __name__=='__main__':
         data_dir = '/home/sung/dataset'
         data_type_and_num = ('cifar100', 100)
 
-        exp_name = 'init'
+        exp_name = 'cifar_50_init'
         start = 0
         comb_list = []
 
         num_per_gpu = 1
         gpus = ['0']
-        network_type = 'resnet18'
         train_list = ['icarl']
         num_exemple_list = [2000]
         optimizer_type = 'sgd'
 
         # Initialize
         only_init = True
+
+        num_init_list = ['50_10']
 
         # Resume Option
         resume = False
@@ -62,8 +63,9 @@ if __name__=='__main__':
         ix = 0
         for tr in train_list:
             for num_ex in num_exemple_list:
-                comb_list.append([tr, num_ex, ix])
-                ix += 1
+                for num_init in num_init_list:
+                    comb_list.append([tr, num_ex, num_init, ix])
+                    ix += 1
 
     elif args.exp == 1:
         server = 'nipa'
@@ -71,31 +73,32 @@ if __name__=='__main__':
         data_dir = '/home/sung/dataset'
         data_type_and_num = ('cifar100', 100)
 
-        exp_name = 'CL'
+        exp_name = 'cifar_50_CL'
         start = 0
         comb_list = []
 
         num_per_gpu = 1
-        network_type = 'resnet18'
-        gpus = ['0', '1', '2']
+        gpus = ['0']
         train_list = ['icarl']
-        num_exemple_list = [100, 500, 2000]
+        num_exemple_list = [2000]
         optimizer_type = 'sgd'
 
         # Initialize
         only_init = False
 
+        num_init_list = ['50_10']
+
         # Resume Option
         resume = True
         resume_task_id = 1
-
-        init_path = '/home/sung/checkpoint/icarl/init/0/task_0_dict.pt'
+        init_path = '/home/sung/checkpoint/icarl/cifar_50_init/0/task_0_dict.pt'
 
         ix = 0
         for tr in train_list:
             for num_ex in num_exemple_list:
-                comb_list.append([tr, num_ex, ix])
-                ix += 1
+                for num_init in num_init_list:
+                    comb_list.append([tr, num_ex, num_init, ix])
+                    ix += 1
 
     # Start From Scratch
     elif args.exp == 2:
@@ -104,12 +107,11 @@ if __name__=='__main__':
         data_dir = '/home/sung/dataset'
         data_type_and_num = ('cifar100', 100)
 
-        exp_name = 'cLcL'
+        exp_name = 'cifar_50'
         start = 0
         comb_list = []
 
         num_per_gpu = 1
-        network_type = 'resnet18'
         gpus = ['0']
         train_list = ['icarl']
         num_exemple_list = [2000]
@@ -117,6 +119,8 @@ if __name__=='__main__':
 
         # Initialize
         only_init = False
+
+        num_init_list = ['50_10']
 
         # Resume Option
         resume = False
@@ -126,8 +130,9 @@ if __name__=='__main__':
         ix = 0
         for tr in train_list:
             for num_ex in num_exemple_list:
-                comb_list.append([tr, num_ex, ix])
-                ix += 1
+                for num_init in num_init_list:
+                    comb_list.append([tr, num_ex, num_init, ix])
+                    ix += 1
 
     else:
         raise('Select Proper Experiment Number')
@@ -156,7 +161,7 @@ if __name__=='__main__':
 
 
             # Modify the network configuration
-            json_network['network_type'] = network_type
+            json_network
             save_json(json_network, os.path.join(save_dir, exp_name, str(exp_num), 'network.json'))
 
 
@@ -170,6 +175,10 @@ if __name__=='__main__':
             json_train['resume_task_id'] = resume_task_id
             json_train['gpu'] = str(gpu)
             json_train['num_exemplary'] = int(comb_ix[1])
+
+            n_i_s, n_s = str(comb_ix[2]).split('_')
+            json_train["num_init_segment"] = int(n_i_s)
+            json_train["num_segment"] = int(n_s)
             save_json(json_train, os.path.join(save_dir, exp_name, str(exp_num), 'train.json'))
 
 

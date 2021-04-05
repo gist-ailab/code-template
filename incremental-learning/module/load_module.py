@@ -2,21 +2,29 @@ import torch
 import torch.nn as nn
 from .network import Incremental_Wrapper, Icarl_Wrapper, Identity_Layer
 from .loss import icarl_loss
-from .resnet import resnet18_cbam, resnet34_cbam, resnet50_cbam, resnet152_cbam
+from .resnet_cifar import ResNet18, ResNet34, ResNet50, ResNet101, ResNet152
 from copy import deepcopy
 import torch
 
-
 def load_model(option, num_class):
-    model_enc = resnet18_cbam(pretrained=False)
+    if 'cifar' in option.result['data']['data_type']:
+        if option.result['network']['network_type'] == 'resnet18':
+            model_enc = ResNet18()
+        elif option.result['network']['network_type'] == 'resnet34':
+            model_enc = ResNet34()
+        else:
+            raise('Select Proper Network Type')
+    else:
+        raise('Select Proper Data Type')
+
     model_fc = nn.Linear(model_enc.num_feature, num_class, bias=True)
 
     if option.result['train']['train_type'] == 'icarl':
         model = Icarl_Wrapper(option, model_enc=model_enc, model_fc=model_fc)
-
     else:
         model = Incremental_Wrapper(option, model_enc=model_enc, model_fc=model_fc)
     return model
+
 
 def load_optimizer(option, params):
     optimizer = option.result['optim']['optimizer']
@@ -28,7 +36,7 @@ def load_optimizer(option, params):
     elif optimizer == "adamw":
         return torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay)
     elif optimizer == "sgd":
-        return torch.optim.SGD(params, lr=lr, weight_decay=weight_decay, momentum = option.result['optim']['momentum'])
+        return torch.optim.SGD(params, lr=lr, weight_decay=weight_decay, momentum=option.result['optim']['momentum'])
     else:
         raise('Selec proper optimizer')
 
@@ -37,7 +45,7 @@ def load_scheduler(option, optimizer):
     if option.result['train']['scheduler'] == 'cosine':
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=option.result['train']['total_epoch'])
     elif option.result['train']['scheduler'] == 'step':
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[48, 62, 80], gamma=0.2)
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[48, 63, 80], gamma=0.2)
     elif option.result['train']['scheduler'] is None:
         scheduler = None
     else:

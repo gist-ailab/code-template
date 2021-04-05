@@ -180,7 +180,6 @@ def main(rank, option, task_id, save_folder):
     else:
         scaler = None
 
-
     # Training
     if option.result['train']['train_type'] == 'naive':
         from module.trainer import naive_trainer
