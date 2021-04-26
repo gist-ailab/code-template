@@ -267,7 +267,8 @@ def run(option, new_model, old_model, new_class, old_class, tr_loader, val_loade
         new_model.eval()
         result = test(option, rank, new_model, val_loader, task_id)
         early.result = result
-        return early, save_module, option
+
+    return early, save_module, option
 
 
 

@@ -16,7 +16,7 @@ class Identity_Layer(nn.Module):
     def forward(self, x):
         return x
 
-
+#### ICaRL Wrapper (Basis)
 class Incremental_Wrapper(nn.Module):
     def __init__(self, option, model_enc, model_fc, old_class, new_class, device):
         super(Incremental_Wrapper, self).__init__()
@@ -163,13 +163,14 @@ class Incremental_Wrapper(nn.Module):
 
     def my_hook(self, grad):
         grad_clone = grad.clone()
-        grad_clone[:self.old_class] = 0
+        grad_clone[:self.old_class] = 0.0
         return grad_clone
 
-    def register_hook(self, n_old_class):
-        self.old_class = n_old_class
-        for param in self.model_fc.parameters():
-            param.register_hook(self.my_hook)
+    def register_hook(self):
+        self.hook = self.model_fc.weight.register_hook(self.my_hook)
+
+    def remove_hook(self):
+        self.hook.remove()
 
 
 ## Augmentation

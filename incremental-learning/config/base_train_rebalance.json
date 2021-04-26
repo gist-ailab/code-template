@@ -4,7 +4,7 @@
   "resume": false,
   "resume_task_id": 0,
 
-  "train_type": "naive",
+  "train_type": "rebalance",
   "pretrain_new_model": true,
   "num_init_segment": 10,
   "num_segment": 10,

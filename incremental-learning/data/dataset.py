@@ -11,13 +11,13 @@ def load_cifar10(option):
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        transforms.Normalize((0.5071, 0.4866, 0.4409), (0.2009, 0.1984, 0.2023))
     ])
 
 
     val_transform = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        transforms.Normalize((0.5071, 0.4866, 0.4409), (0.2009, 0.1984, 0.2023))
     ])
 
     tr_dataset = torchvision.datasets.CIFAR10(root=os.path.join(option.result['data']['data_dir'], option.result['data']['data_type']), train=True, download=True, transform=tr_transform)
@@ -25,18 +25,19 @@ def load_cifar10(option):
     ex_dataset = torchvision.datasets.CIFAR10(root=os.path.join(option.result['data']['data_dir'], option.result['data']['data_type']), train=True, download=True, transform=val_transform)
     return tr_dataset, val_dataset, ex_dataset
 
+
 def load_cifar100(option):
     tr_transform = transforms.Compose([
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        transforms.Normalize((0.5071, 0.4866, 0.4409), (0.2009, 0.1984, 0.2023))
     ])
 
 
     val_transform = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        transforms.Normalize((0.5071, 0.4866, 0.4409), (0.2009, 0.1984, 0.2023))
     ])
 
     tr_dataset = torchvision.datasets.CIFAR100(root=os.path.join(option.result['data']['data_dir'], option.result['data']['data_type']), train=True, download=True, transform=tr_transform)
@@ -106,11 +107,12 @@ def load_data(option, data_type='train'):
     else:
         return ex_d
 
+
 class transform_module():
     def __init__(self, option):
         if 'cifar' in option.result['data']['data_type']:
-            mu = np.array([0.4914, 0.4822, 0.4465])
-            std = np.array([0.2023, 0.1994, 0.2010])
+            mu = np.array([0.5071,  0.4866,  0.4409])
+            std = np.array([0.2009,  0.1984,  0.2023])
         elif option.result['data']['data_type'] == 'imagenet':
             mu = np.array([0.485, 0.456, 0.406])
             std = np.array([0.229, 0.224, 0.225])
@@ -136,6 +138,7 @@ class transform_module():
         img = transform_un_normalize(img)
         img = torch.unsqueeze(img, dim=0)
         return img
+
 
 class IncrementalSet(Dataset):
     def __init__(self, dataset, dataset_exemplar, start, target_list, shuffle_label=False):

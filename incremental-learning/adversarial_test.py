@@ -23,6 +23,7 @@ import numpy as np
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '12355'
+
     # initialize the process group
     dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
 
@@ -176,119 +177,19 @@ def main(rank, option, task_id, save_folder):
             new_model.get_aug_exemplar()
             tr_dataset.update_exemplar(new_model.exemplar_aug_list)
 
-    # Validation Set
-    val_dataset = load_data(option, data_type='val')
-    val_dataset = IncrementalSet(val_dataset, ex_dataset, start, target_list=val_target_list, shuffle_label=False)
-
-    if ddp:
-        tr_sampler = torch.utils.data.distributed.DistributedSampler(dataset=tr_dataset,
-                                                                     num_replicas=num_gpu, rank=rank)
-        val_sampler = torch.utils.data.distributed.DistributedSampler(dataset=val_dataset,
-                                                                     num_replicas=num_gpu, rank=rank)
-
-        tr_loader = torch.utils.data.DataLoader(dataset=tr_dataset, batch_size=batch_size,
-                                                  shuffle=False, num_workers=4*num_gpu, pin_memory=pin_memory,
-                                                  sampler=tr_sampler)
-        val_loader = torch.utils.data.DataLoader(dataset=val_dataset, batch_size=batch_size,
-                                                  shuffle=False, num_workers=4*num_gpu, pin_memory=pin_memory,
-                                                  sampler=val_sampler)
-    else:
-        tr_loader = DataLoader(tr_dataset, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=4*num_gpu)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=4*num_gpu)
+    tr_loader = DataLoader(tr_dataset, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=4*num_gpu)
 
 
-    # Mixed Precision
-    mixed_precision = option.result['train']['mixed_precision']
-    if mixed_precision:
-        scaler = torch.cuda.amp.GradScaler()
-    else:
-        scaler = None
-
-    # Training
-    if option.result['train']['train_type'] == 'naive':
-        from module.trainer import naive_trainer
-
-        old_model.eval()
-        for epoch in range(0, save_module.total_epoch):
-            new_model.train()
-            new_model, optimizer, save_module = naive_trainer.train(option, rank, epoch, task_id, new_model, old_model, \
-                                                                    criterion, optimizer, tr_loader, scaler, save_module)
-
-            new_model.eval()
-            result = naive_trainer.validation(option, rank, epoch, task_id, new_model, old_model, criterion, val_loader)
-
-            if scheduler is not None:
-                scheduler.step()
-                save_module.save_dict['scheduler'] = [scheduler.state_dict()]
-            else:
-                save_module.save_dict['scheduler'] = None
-
-            # Early Stop
-            if multi_gpu:
-                param = deepcopy(new_model.module.state_dict())
-            else:
-                param = deepcopy(new_model.state_dict())
-
-            if option.result['train']['early_criterion_loss']:
-                early(result['val_loss'], param, result)
-            else:
-                early(-result['acc1'], param, result)
-
-            if early.early_stop == True:
-                break
-
-            if early_stop == False:
-                early.result = result
-
-    elif option.result['train']['train_type'] == 'icarl':
-        from module.trainer.icarl_trainer import run
-        early, save_module, option = run(option, new_model, old_model, new_class, old_class, tr_loader, val_loader, tr_dataset, val_dataset, tr_target_list, val_target_list,
-                                         optimizer, criterion, scaler, scheduler, early, early_stop, save_folder, save_module, multi_gpu, rank, task_id, ddp)
-
-    elif option.result['train']['train_type'] == 'rebalance':
-        from module.trainer.rebalance_trainer import run
-        early, save_module, option = run(option, new_model, old_model, new_class, old_class, tr_loader, val_loader, tr_dataset, val_dataset, tr_target_list, val_target_list,
-                                         optimizer, criterion, scaler, scheduler, early, early_stop, save_folder, save_module, multi_gpu, rank, task_id, ddp)
-
-    else:
-        raise('select proper train_type')
+    # Adversarial Attack
 
 
-    # Saver
-    if (rank == 'cuda') or (rank==0):
-        # Load the best model
-        best_result = early.result
 
-        if early_stop:
-            best_param = early.model
-            save_module.save_dict['model'] = [best_param]
 
-        # Save the best result
-        val_acc1, val_acc5, val_loss = best_result['acc1'], best_result['acc5'], best_result['val_loss']
 
-        if task_id == 0:
-            mode = 'w'
-        else:
-            mode = 'a'
 
-        with open(os.path.join(save_folder, 'result.txt'), mode) as f:
-            f.write('task_%d - val_acc@1: %.2f, val_acc@5: %.2f, val_loss: %.3f \n' %(task_id, val_acc1, val_acc5, val_loss))
 
-        # Save the Module
-        save_module_path = os.path.join(save_folder, 'task_%d_dict.pt' %task_id)
-        save_module.export_module(save_module_path)
 
-        save_config_path = os.path.join(save_folder, 'task_%d_config.json' %task_id)
-        option.export_config(save_config_path)
 
-    if hook:
-        if multi_gpu:
-            new_model.module.remove_hook()
-        else:
-            new_model.remove_hook()
-
-    if ddp:
-        cleanup()
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description='')
@@ -324,15 +225,6 @@ if __name__=='__main__':
             option = config(save_folder)
             option.import_config(config_path)
 
-    # Logger
-    if args.log:
-        token = 'eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiI5MTQ3MjY2Yy03YmM4LTRkOGYtOWYxYy0zOTk3MWI0ZDY3M2MifQ=='
-        neptune.init('sunghoshin/imp', api_token=token)
-        exp_name, exp_num = save_folder.split('/')[-2], save_folder.split('/')[-1]
-        neptune.create_experiment(params={'exp_name':exp_name, 'exp_num':exp_num, 'train_type':option.result['train']['train_type'],
-                                          'num_exemplary':int(option.result['exemplar']['num_exemplary'])},
-                                  tags=['inference:False'])
-
 
     # GPU
     os.environ["CUDA_VISIBLE_DEVICES"] = option.result['train']['gpu']
@@ -358,43 +250,3 @@ if __name__=='__main__':
             mp.spawn(main, args=(option, task_id, save_folder, ), nprocs=num_gpu, join=True)
         else:
             main('cuda', option, task_id, save_folder)
-
-        # Logging the result
-        with open(os.path.join(save_folder,'result.txt'), 'r') as f:
-            result_list = f.readlines()
-
-        result_line = result_list[-1]
-        start =[pos for pos, char in enumerate(result_line) if char == ':']
-        end =[pos for pos, char in enumerate(result_line) if char == ',']
-
-        acc1 = float(result_line[start[0]+1 : end[0]].strip())
-        acc5 = float(result_line[start[1]+1 : end[1]].strip())
-        val_loss = float(result_line[start[2]+1 : -1].strip())
-
-        if args.log:
-            neptune.log_metric('val_acc1', task_id, acc1)
-            neptune.log_metric('val_acc5', task_id, acc5)
-            neptune.log_metric('val_loss', task_id, val_loss)
-            neptune.log_metric('task_id', task_id)
-
-    # Total Average Result
-    val_acc1_list, val_acc5_list = [], []
-    with open(os.path.join(save_folder,'result.txt'), 'r') as f:
-        for task_id in range(num_task):
-            result = f.readline().strip()
-
-            start = [pos for pos, char in enumerate(result) if char == ':']
-            end = [pos for pos, char in enumerate(result) if char == ',']
-
-            acc1 = float(result[start[0] + 1: end[0]].strip())
-            acc5 = float(result[start[1] + 1: end[1]].strip())
-
-            val_acc1_list.append(acc1)
-            val_acc5_list.append(acc5)
-
-    val_acc1_total, val_acc5_total = np.mean(np.array(val_acc1_list)), np.mean(np.array(val_acc5_list))
-    print('Total Average Accuracy - acc@1: %.2f, acc@5: %.2f' %(val_acc1_total, val_acc5_total))
-
-    if args.log:
-        neptune.log_metric('val_acc1_total', val_acc1_total)
-        neptune.log_metric('val_acc5_total', val_acc5_total)

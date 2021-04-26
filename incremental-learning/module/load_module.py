@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 from .network import Incremental_Wrapper, Augment_Wrapper, Identity_Layer
-from .loss import icarl_loss
+from .loss import icarl_loss, rebalance_loss
+from .layers import CosineLinear
 from copy import deepcopy
 import torch
 
@@ -19,13 +20,26 @@ def load_model(option, num_class, old_class, new_class, device, transform=None):
     else:
         raise('Select Proper Network Type')
 
-    model_fc = nn.Linear(model_enc.num_feature, num_class, bias=True)
-
+    # Training Type
     if option.result['train']['train_type'] == 'icarl':
+        model_fc = nn.Linear(model_enc.num_feature, num_class, bias=True)
+
         if option.result['exemplar']['augment'] is None:
             model = Incremental_Wrapper(option, model_enc=model_enc, model_fc=model_fc, old_class=old_class, new_class=new_class, device=device)
         else:
             model = Augment_Wrapper(option, model_enc, model_fc, old_class, new_class, device, transform)
+
+    elif option.result['train']['train_type'] == 'naive':
+        pass
+
+    elif option.result['train']['train_type'] == 'rebalance':
+        model_fc = CosineLinear(model_enc.num_feature, num_class)
+
+        if option.result['exemplar']['augment'] is None:
+            model = Incremental_Wrapper(option, model_enc=model_enc, model_fc=model_fc, old_class=old_class, new_class=new_class, device=device)
+        else:
+            model = Augment_Wrapper(option, model_enc, model_fc, old_class, new_class, device, transform)
+
     else:
         raise('Select Proper training type')
 
@@ -65,6 +79,8 @@ def load_loss(option, old_class, new_class):
         criterion = nn.CrossEntropyLoss()
     elif train_type == 'icarl':
         criterion = icarl_loss(old_class, new_class)
+    elif train_type == 'rebalance':
+        criterion = nn.CrossEntropyLoss()
     else:
         raise('select proper train_type')
 
