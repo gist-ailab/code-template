@@ -48,7 +48,7 @@ def main(rank, option, resume, save_folder):
 
     # Logger
     if (rank == 0) or (rank == 'cuda'):
-        neptune.init('sunghoshin/imp', api_token='eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vdWkubmVwdHVuZS5haSIsImFwaV91cmwiOiJodHRwczovL3VpLm5lcHR1bmUuYWkiLCJhcGlfa2V5IjoiYzdlYWFkMjctOWExMS00YTRlLWI0MWMtY2FhNmIyNzZlYTIyIn0=')
+        neptune.init('sunghoshin/test', api_token='eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vdWkubmVwdHVuZS5haSIsImFwaV91cmwiOiJodHRwczovL3VpLm5lcHR1bmUuYWkiLCJhcGlfa2V5IjoiYzdlYWFkMjctOWExMS00YTRlLWI0MWMtY2FhNmIyNzZlYTIyIn0=')
         exp_name, exp_num = save_folder.split('/')[-2], save_folder.split('/')[-1]
         neptune.create_experiment(params={'exp_name':exp_name, 'exp_num':exp_num},
                                   tags=['inference:True'])

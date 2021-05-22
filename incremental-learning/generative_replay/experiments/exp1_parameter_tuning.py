@@ -11,15 +11,14 @@ def load_json(json_path):
         out = json.load(f)
     return out
 
-
 def save_json(json_data, json_path):
     with open(json_path, 'w') as f:
         json.dump(json_data, f)
 
-
 if __name__=='__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--exp', type=int, default=1)
+    parser.add_argument('--exp', type=int, default=0)
+    parser.add_argument('--log', type=lambda x: x.lower()=='true', default=True)
     args = parser.parse_args()
 
     # Data Configuration
@@ -30,33 +29,41 @@ if __name__=='__main__':
     json_network_path = '../config/base_network.json'
     json_network = load_json(json_network_path)
 
-    # Train Configuration
-    json_train_path = '../config/base_train.json'
-    json_train = load_json(json_train_path)
-
     # Meta Configuration
     json_meta_path = '../config/base_meta.json'
     json_meta = load_json(json_meta_path)
 
     # Setup Configuration for Each Experiments
-    if args.exp == 1:
+    if args.exp == 0:
         server = 'nipa'
-        save_dir = '/data/sung/checkpoint/CL'
+        save_dir = '/data/sung/checkpoint/dafl'
         data_dir = '/data/sung/dataset'
-        data_type_and_num = ('imagenet', 1000)
+        data_type_and_num = ('cifar100', 100, 32)
 
-        exp_name = 'test1'
+        exp_name = 'pretrain'
         start = 0
-        ix = 0
         comb_list = []
 
         num_per_gpu = 1
-        gpus = ['3,4,5,6,7']
-        epoch_list = [200]
+        network_type = 'resnet18'
+        gpus = ['0,1,2,3', '4,5,6,7']
+        train_list = ['dafl']
+        batch_size = 1024
+        pretrain_list = ['true', 'false']
 
-        for epoch in epoch_list:
-            comb_list.append([epoch, ix])
-            ix += 1
+        # Initialize
+        only_init = False
+
+        # Resume Option
+        resume = True
+        resume_task_id = 1
+        init_path = '/data/sung/checkpoint/dafl/init/0/task_0_dict.pt'
+
+        ix = 0
+        for tr in train_list:
+            for pre in pretrain_list:
+                comb_list.append([tr, pre, ix])
+                ix += 1
 
     else:
         raise('Select Proper Experiment Number')
@@ -78,19 +85,31 @@ if __name__=='__main__':
             gpu = gpus[ix]
 
             # Modify the data configuration
-            json_data['data_dir'] = data_dir
+            json_data['data_dir'] = str(data_dir)
             json_data['data_type'] = data_type_and_num[0]
             json_data['num_class'] = data_type_and_num[1]
+            json_data['img_size'] = data_type_and_num[2]
             save_json(json_data, os.path.join(save_dir, exp_name, str(exp_num), 'data.json'))
 
+
             # Modify the network configuration
-            json_network
+            json_network['network_type'] = network_type
             save_json(json_network, os.path.join(save_dir, exp_name, str(exp_num), 'network.json'))
 
+
             # Modify the train configuration
-            json_train['total_epoch'] = int(comb_ix[0])
+            train_type = str(comb_ix[0])
+            json_train_path = '../config/base_train_%s.json' %train_type
+            json_train = load_json(json_train_path)
+
+            json_train['pretrain_new_model'] = True if str(comb_ix[1]) == 'true' else False
+            json_train['only_init'] = only_init
+            json_train['resume'] = resume
+            json_train['resume_task_id'] = resume_task_id
             json_train['gpu'] = str(gpu)
+            json_train['batch_size'] = batch_size
             save_json(json_train, os.path.join(save_dir, exp_name, str(exp_num), 'train.json'))
+
 
             # Modify the meta configuration
             json_meta['server'] = str(server)
@@ -98,9 +117,20 @@ if __name__=='__main__':
             save_json(json_meta, os.path.join(save_dir, exp_name, str(exp_num), 'meta.json'))
 
             # Run !
-            script = 'python ../main.py --save_dir %s --exp_name %s --exp_num %d' %(save_dir, exp_name, exp_num) \
+            if init_path is not None:
+                script0_0 = 'cp -r %s %s' % (os.path.join('/'.join(init_path.split('/')[:-1]), 'result.txt'), os.path.join(save_dir, exp_name, str(exp_num)))
+                script0_1 = 'cp -r %s %s' % (os.path.join('/'.join(init_path.split('/')[:-1]), 'task_0_dict.pt'), os.path.join(save_dir, exp_name, str(exp_num)))
 
-            subprocess.call(script, shell=True)
+                script1 = 'python ../generate_init_set.py --save_dir %s --exp_name %s --exp_num %s --init_path %s' %(save_dir, exp_name, exp_num, init_path)
+                script2 = 'python ../main.py --save_dir %s --exp_name %s --exp_num %d --log %s' % (save_dir, exp_name, exp_num, str(args.log))
+                subprocess.call(script0_0, shell=True)
+                subprocess.call(script0_1, shell=True)
+                subprocess.call(script1, shell=True)
+                subprocess.call(script2, shell=True)
+
+            else:
+                script = 'python ../main.py --save_dir %s --exp_name %s --exp_num %d --log %s' %(save_dir, exp_name, exp_num, str(args.log))
+                subprocess.call(script, shell=True)
 
 
     for ix in range(len(gpus)):

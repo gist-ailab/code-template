@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 from torchvision.models.resnet import resnet18
 
-def load_model(option, num_class):
+def load_model(option):
+    num_class = option.result['data']['num_class']
     model = resnet18(pretrained=False, num_classes=num_class)
     return model
 

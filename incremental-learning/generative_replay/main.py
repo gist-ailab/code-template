@@ -8,7 +8,6 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from module.load_module import load_model, load_loss, load_optimizer, load_scheduler
-from module.layers import CosineLinear
 from utility.utils import config, train_module
 from utility.earlystop import EarlyStopping
 
@@ -33,6 +32,7 @@ def main(rank, option, task_id, save_folder):
     # Basic Options
     if task_id == 0:
         resume = False
+        resume_path = None
     else:
         resume = True
         resume_path = os.path.join(save_folder, 'task_%d_dict.pt' %(task_id-1))
@@ -54,9 +54,6 @@ def main(rank, option, task_id, save_folder):
     if early_stop == False:
         option.result['train']['patience'] = 100000
 
-    # Hook
-    hook = False
-
     # Load Model
     def calc_num_class(task_id):
         if task_id == 0:
@@ -73,43 +70,33 @@ def main(rank, option, task_id, save_folder):
         old_class = calc_num_class(task_id - 1)
 
     transform = transform_module(option)
-    old_model = load_model(option, num_class=old_class, old_class=old_class, new_class=new_class, transform=transform, device=rank)
-    criterion = load_loss(option, old_class, new_class)
+    old_model_list = load_model(option, num_class=old_class, device=rank)
+    criterion = load_loss(option, old_class, new_class, task_id)
 
     if resume:
-        save_module = train_module(total_epoch, old_model, criterion, multi_gpu)
+        save_module = train_module(total_epoch, old_model_list, criterion, multi_gpu)
         save_module.import_module(resume_path)
-        old_model.load_state_dict(save_module.save_dict['model'][0])
+
+        old_model_list[0].load_state_dict(save_module.save_dict['model'][0])
 
     # New Model
+    new_model_list = load_model(option, num_class=new_class, device=rank)
+
+
+    print(option.result['train']['pretrain_new_model'], '******')
     if option.result['train']['pretrain_new_model'] and task_id > 0:
-        new_model = deepcopy(old_model)
+        new_model = deepcopy(old_model_list[0])
+        new_model.model_fc = nn.Linear(new_model.model_fc.in_features, new_class, bias=True)
 
-        if option.result['train']['train_type'] == 'rebalance':
-            new_model.model_fc = CosineLinear(new_model.model_enc.num_feature, new_class)
-        else:
-            new_model.model_fc = nn.Linear(new_model.model_fc.in_features, new_class, bias=True)
-
-        new_model.model_fc.weight.data[:old_class] = old_model.model_fc.weight.data
+        # Load Weight from OLD model
+        new_model.model_fc.weight.data[:old_class] = old_model_list[0].model_fc.weight.data
         if new_model.model_fc.bias is not None:
-            new_model.model_fc.bias.data[:old_class] = old_model.model_fc.bias.data
+            new_model.model_fc.bias.data[:old_class] = old_model_list[0].model_fc.bias.data
 
-        if option.result['train']['train_type'] == 'rebalance':
-            hook = True
-            new_model.register_hook()
+        new_model_list[0] = new_model
 
-    else:
-        new_model = load_model(option, num_class=new_class, old_class=old_class, new_class=new_class, transform=transform, device=rank)
-
-    save_module = train_module(total_epoch, new_model, criterion, multi_gpu)
-
-
-    # Load Old Exemplary Samples
-    if (option.result['exemplar']['num_exemplary'] > 0) and (task_id > 0):
-        new_model.exemplar_list = torch.load(os.path.join(save_folder, 'task_%d_exemplar.pt' %(task_id-1)))
-    else:
-        new_model.exemplar_list = []
-
+    # Save module for New Classifier
+    save_module = train_module(total_epoch, new_model_list, criterion, multi_gpu)
 
     # Multi-Processing GPUs
     if ddp:
@@ -117,30 +104,35 @@ def main(rank, option, task_id, save_folder):
         torch.manual_seed(0)
         torch.cuda.set_device(rank)
 
-        old_model.to(rank)
-        new_model.to(rank)
-
+        old_model = old_model_list[0].to(rank)
         old_model = DDP(old_model, device_ids=[rank])
-        new_model = DDP(new_model, device_ids=[rank])
-
         old_model = apply_gradient_allreduce(old_model)
-        new_model = apply_gradient_allreduce(new_model)
+
+        for ix in range(len(new_model_list)):
+            new_model_list[ix] = new_model_list[ix].to(rank)
+            new_model_list[ix] = DDP(new_model_list[ix], device_ids=[rank])
+            new_model_list[ix] = apply_gradient_allreduce(new_model_list[ix])
 
         criterion.to(rank)
 
     else:
         if multi_gpu:
-            old_model = nn.DataParallel(old_model).to(rank)
-            new_model = nn.DataParallel(new_model).to(rank)
+            old_model = nn.DataParallel(old_model_list[0]).to(rank)
+            for ix in range(len(new_model_list)):
+                new_model_list[ix] = nn.DataParallel(new_model_list[ix]).to(rank)
         else:
-            old_model = old_model.to(rank)
-            new_model = new_model.to(rank)
+            old_model = old_model_list[0].to(rank)
+            for ix in range(len(new_model_list)):
+                new_model_list[ix] = new_model_list[ix].to(rank)
 
 
     # Optimizer and Scheduler
-    optimizer = load_optimizer(option, new_model.parameters())
+    optimizer_list = load_optimizer(option, new_model_list, task_id)
+
     if scheduler is not None:
-        scheduler = load_scheduler(option, optimizer)
+        scheduler_list = load_scheduler(option, optimizer_list, task_id)
+    else:
+        scheduler_list = None
 
     # Early Stopping
     early = EarlyStopping(patience=option.result['train']['patience'])
@@ -158,27 +150,21 @@ def main(rank, option, task_id, save_folder):
     tr_target_list = list(range(start, end))
     val_target_list = list(range(0, end))
 
+    if task_id > 0:
+        val_old_target_list = list(range(0, start))
+    else:
+        val_old_target_list = list(range(start, end))
+
     tr_dataset = load_data(option, data_type='train')
-    ex_dataset = load_data(option, data_type='exemplar')
-    tr_dataset = IncrementalSet(tr_dataset, ex_dataset, start, target_list=tr_target_list, shuffle_label=True)
+    tr_dataset = IncrementalSet(tr_dataset, None, start, target_list=tr_target_list, shuffle_label=True)
 
-
-    # Update the image size as a sample
-    d_ex, _ = tr_dataset.__getitem__(0)
-    new_model.update_datasize(d_ex.size())
-
-    # Merge exemplar set into training dataset
-    if (task_id > 0) and (option.result['exemplar']['num_exemplary'] > 0):
-        if multi_gpu:
-            new_model.module.get_aug_exemplar()
-            tr_dataset.update_exemplar(new_model.module.exemplar_aug_list)
-        else:
-            new_model.get_aug_exemplar()
-            tr_dataset.update_exemplar(new_model.exemplar_aug_list)
 
     # Validation Set
     val_dataset = load_data(option, data_type='val')
-    val_dataset = IncrementalSet(val_dataset, ex_dataset, start, target_list=val_target_list, shuffle_label=False)
+    val_dataset = IncrementalSet(val_dataset, None, start, target_list=val_target_list, shuffle_label=False)
+
+    val_old_dataset = load_data(option, data_type='val')
+    val_old_dataset = IncrementalSet(val_old_dataset, None, start, target_list=val_old_target_list, shuffle_label=False)
 
     if ddp:
         tr_sampler = torch.utils.data.distributed.DistributedSampler(dataset=tr_dataset,
@@ -192,9 +178,14 @@ def main(rank, option, task_id, save_folder):
         val_loader = torch.utils.data.DataLoader(dataset=val_dataset, batch_size=batch_size,
                                                   shuffle=False, num_workers=4*num_gpu, pin_memory=pin_memory,
                                                   sampler=val_sampler)
+        val_old_loader = torch.utils.data.DataLoader(dataset=val_old_dataset, batch_size=batch_size,
+                                                 shuffle=False, num_workers=4 * num_gpu, pin_memory=pin_memory,
+                                                 sampler=val_sampler)
+
     else:
         tr_loader = DataLoader(tr_dataset, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=4*num_gpu)
         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=4*num_gpu)
+        val_old_loader = DataLoader(val_old_dataset, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=4*num_gpu)
 
 
     # Mixed Precision
@@ -205,50 +196,10 @@ def main(rank, option, task_id, save_folder):
         scaler = None
 
     # Training
-    if option.result['train']['train_type'] == 'naive':
-        from module.trainer import naive_trainer
-
-        old_model.eval()
-        for epoch in range(0, save_module.total_epoch):
-            new_model.train()
-            new_model, optimizer, save_module = naive_trainer.train(option, rank, epoch, task_id, new_model, old_model, \
-                                                                    criterion, optimizer, tr_loader, scaler, save_module)
-
-            new_model.eval()
-            result = naive_trainer.validation(option, rank, epoch, task_id, new_model, old_model, criterion, val_loader)
-
-            if scheduler is not None:
-                scheduler.step()
-                save_module.save_dict['scheduler'] = [scheduler.state_dict()]
-            else:
-                save_module.save_dict['scheduler'] = None
-
-            # Early Stop
-            if multi_gpu:
-                param = deepcopy(new_model.module.state_dict())
-            else:
-                param = deepcopy(new_model.state_dict())
-
-            if option.result['train']['early_criterion_loss']:
-                early(result['val_loss'], param, result)
-            else:
-                early(-result['acc1'], param, result)
-
-            if early.early_stop == True:
-                break
-
-            if early_stop == False:
-                early.result = result
-
-    elif option.result['train']['train_type'] == 'icarl':
-        from module.trainer.icarl_trainer import run
-        early, save_module, option = run(option, new_model, old_model, new_class, old_class, tr_loader, val_loader, tr_dataset, val_dataset, tr_target_list, val_target_list,
-                                         optimizer, criterion, scaler, scheduler, early, early_stop, save_folder, save_module, multi_gpu, rank, task_id, ddp)
-
-    elif option.result['train']['train_type'] == 'rebalance':
-        from module.trainer.rebalance_trainer import run
-        early, save_module, option = run(option, new_model, old_model, new_class, old_class, tr_loader, val_loader, tr_dataset, val_dataset, tr_target_list, val_target_list,
-                                         optimizer, criterion, scaler, scheduler, early, early_stop, save_folder, save_module, multi_gpu, rank, task_id, ddp)
+    if option.result['train']['train_type'] == 'dafl':
+        from module.trainer.dafl_trainer import run
+        early, save_module, option = run(option, new_model_list, old_model, new_class, old_class, tr_loader, val_loader, val_old_loader, tr_dataset, val_dataset, tr_target_list, val_target_list,
+                                         optimizer_list, criterion, scaler, scheduler_list, early, early_stop, save_folder, save_module, multi_gpu, rank, task_id, ddp)
 
     else:
         raise('select proper train_type')
@@ -261,7 +212,7 @@ def main(rank, option, task_id, save_folder):
 
         if early_stop:
             best_param = early.model
-            save_module.save_dict['model'] = [best_param]
+            save_module.save_dict['model'] = best_param
 
         # Save the best result
         val_acc1, val_acc5, val_loss = best_result['acc1'], best_result['acc5'], best_result['val_loss']
@@ -280,12 +231,6 @@ def main(rank, option, task_id, save_folder):
 
         save_config_path = os.path.join(save_folder, 'task_%d_config.json' %task_id)
         option.export_config(save_config_path)
-
-    if hook:
-        if multi_gpu:
-            new_model.module.remove_hook()
-        else:
-            new_model.remove_hook()
 
     if ddp:
         cleanup()
@@ -329,8 +274,7 @@ if __name__=='__main__':
         token = 'eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiI5MTQ3MjY2Yy03YmM4LTRkOGYtOWYxYy0zOTk3MWI0ZDY3M2MifQ=='
         neptune.init('sunghoshin/imp', api_token=token)
         exp_name, exp_num = save_folder.split('/')[-2], save_folder.split('/')[-1]
-        neptune.create_experiment(params={'exp_name':exp_name, 'exp_num':exp_num, 'train_type':option.result['train']['train_type'],
-                                          'num_exemplary':int(option.result['exemplar']['num_exemplary'])},
+        neptune.create_experiment(params={'exp_name':exp_name, 'exp_num':exp_num, 'train_type':option.result['train']['train_type']},
                                   tags=['inference:False'])
 
 
@@ -342,7 +286,6 @@ if __name__=='__main__':
         ddp = option.result['train']['ddp']
     else:
         ddp = False
-
 
     # RUN
     if option.result['train']['only_init']:

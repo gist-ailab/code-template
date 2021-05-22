@@ -1,0 +1,6 @@
+{
+  "data_type": "cifar100",
+  "data_dir": "/home/sung/dataset",
+  "num_class": 100,
+  "img_size": 32
+}

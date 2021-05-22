@@ -1,0 +1,29 @@
+{
+  "gpu": "0,1,2",
+  "only_init": false,
+  "resume": false,
+  "resume_task_id": 0,
+
+  "train_type": "dafl",
+  "pretrain_new_model": true,
+  "num_init_segment": 10,
+  "num_segment": 10,
+
+  "total_epoch": 100,
+  "gen_epoch": 2000,
+  "scheduler": "step",
+  "batch_size": 1024,
+
+  "ddp": false,
+  "pin_memory": true,
+  "mixed_precision": false,
+
+  "early": false,
+  "patience": 10000,
+  "early_criterion_loss": false,
+
+  "lr_s": 0.1,
+  "lr_g": 0.02,
+  "latent_dim": 1000,
+  "split": true,
+}
