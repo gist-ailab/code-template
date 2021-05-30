@@ -19,6 +19,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from utility.distributed import apply_gradient_allreduce, reduce_tensor
 import numpy as np
 
+from module.generation_module import Generate_old
+
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '12355'
@@ -82,8 +84,6 @@ def main(rank, option, task_id, save_folder):
     # New Model
     new_model_list = load_model(option, num_class=new_class, device=rank)
 
-
-    print(option.result['train']['pretrain_new_model'], '******')
     if option.result['train']['pretrain_new_model'] and task_id > 0:
         new_model = deepcopy(old_model_list[0])
         new_model.model_fc = nn.Linear(new_model.model_fc.in_features, new_class, bias=True)
@@ -94,6 +94,7 @@ def main(rank, option, task_id, save_folder):
             new_model.model_fc.bias.data[:old_class] = old_model_list[0].model_fc.bias.data
 
         new_model_list[0] = new_model
+
 
     # Save module for New Classifier
     save_module = train_module(total_epoch, new_model_list, criterion, multi_gpu)
@@ -124,6 +125,39 @@ def main(rank, option, task_id, save_folder):
             old_model = old_model_list[0].to(rank)
             for ix in range(len(new_model_list)):
                 new_model_list[ix] = new_model_list[ix].to(rank)
+
+
+    # Generate the Old-Exemplar Set
+    exemplar = None
+
+    if option.result['train']['train_type'] == 'dream' and task_id > 0:
+        old_student = load_model(option, num_class=old_class, device=rank)[0]
+
+        if ddp:
+            old_student = old_student.to(rank)
+            old_student = DDP(old_student, device_ids=[rank])
+            old_student = apply_gradient_allreduce(old_student)
+        else:
+            if multi_gpu:
+                old_student = nn.DataParallel(old_student).to(rank)
+            else:
+                old_student = old_student.to(rank)
+
+        old_model.eval()
+        old_student.eval()
+
+        if os.path.isfile(os.path.join(save_folder, 'exemplar', 'task_%d.pt' %(task_id - 1))):
+            print('Load Old Samples')
+            exemplar_path = os.path.join(save_folder, 'exemplar', 'task_%d.pt' % (task_id - 1))
+            exemplar = torch.load(exemplar_path)
+
+        else:
+            print('Generate Old Samples')
+            g_module = Generate_old(option, save_folder, task_id, old_model, old_student, old_class, multi_gpu, random_label=False, device=rank)
+            g_module.dream()
+            exemplar = g_module.generated_imgs
+
+        del old_student
 
 
     # Optimizer and Scheduler
@@ -157,6 +191,9 @@ def main(rank, option, task_id, save_folder):
 
     tr_dataset = load_data(option, data_type='train')
     tr_dataset = IncrementalSet(tr_dataset, None, start, target_list=tr_target_list, shuffle_label=True)
+
+    if exemplar is not None:
+        tr_dataset.update_exemplar(exemplar)
 
 
     # Validation Set
@@ -200,6 +237,15 @@ def main(rank, option, task_id, save_folder):
         from module.trainer.dafl_trainer import run
         early, save_module, option = run(option, new_model_list, old_model, new_class, old_class, tr_loader, val_loader, val_old_loader, tr_dataset, val_dataset, tr_target_list, val_target_list,
                                          optimizer_list, criterion, scaler, scheduler_list, early, early_stop, save_folder, save_module, multi_gpu, rank, task_id, ddp)
+
+
+    elif option.result['train']['train_type'] == 'dream':
+        from module.trainer.dream_trainer import run
+        early, save_module, option = run(option, new_model_list, old_model, new_class, old_class, tr_loader, val_loader,
+                                         val_old_loader, tr_dataset, val_dataset, tr_target_list, val_target_list,
+                                         optimizer_list, criterion, scaler, scheduler_list, early, early_stop,
+                                         save_folder, save_module, multi_gpu, rank, task_id, ddp)
+
 
     else:
         raise('select proper train_type')
@@ -249,7 +295,6 @@ if __name__=='__main__':
     option = config(save_folder)
     option.get_all_config()
 
-
     # Resume Configuration
     resume = option.result['train']['resume']
 
@@ -272,7 +317,7 @@ if __name__=='__main__':
     # Logger
     if args.log:
         token = 'eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiI5MTQ3MjY2Yy03YmM4LTRkOGYtOWYxYy0zOTk3MWI0ZDY3M2MifQ=='
-        neptune.init('sunghoshin/imp', api_token=token)
+        neptune.init('sunghoshin/data-free-cl', api_token=token)
         exp_name, exp_num = save_folder.split('/')[-2], save_folder.split('/')[-1]
         neptune.create_experiment(params={'exp_name':exp_name, 'exp_num':exp_num, 'train_type':option.result['train']['train_type']},
                                   tags=['inference:False'])
@@ -319,6 +364,7 @@ if __name__=='__main__':
             neptune.log_metric('val_acc5', task_id, acc5)
             neptune.log_metric('val_loss', task_id, val_loss)
             neptune.log_metric('task_id', task_id)
+
 
     # Total Average Result
     val_acc1_list, val_acc5_list = [], []

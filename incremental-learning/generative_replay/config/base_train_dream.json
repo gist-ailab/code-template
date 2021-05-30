@@ -4,15 +4,15 @@
   "resume": false,
   "resume_task_id": 0,
 
-  "train_type": "dafl",
+  "train_type": "dream",
   "pretrain_new_model": true,
   "num_init_segment": 10,
   "num_segment": 10,
 
   "total_epoch": 100,
-  "gen_epoch": 2000,
   "scheduler": "step",
-  "batch_size": 512,
+  "batch_size": 128,
+  "lr": 0.1,
 
   "ddp": false,
   "pin_memory": true,
@@ -22,7 +22,13 @@
   "patience": 10000,
   "early_criterion_loss": false,
 
-  "lr_s": 0.1,
-  "lr_g": 0.02,
-  "latent_dim": 1000
+  "gen_epoch": 2000,
+  "gen_batch_size": 256,
+  "num_old_images": 5000,
+
+  "lr_gen": 0.1,
+  "competitive_scale": 0.0,
+  "var_scale": 2.5e-5,
+  "bn_reg_scale": 0.01,
+  "l2_coeff": 0.0
 }

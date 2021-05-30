@@ -35,21 +35,20 @@ if __name__=='__main__':
 
     # Setup Configuration for Each Experiments
     if args.exp == 0:
-        server = 'nipa'
-        save_dir = '/home/sung/checkpoint/dafl'
-        data_dir = '/home/sung/dataset'
-        data_type_and_num = ('cifar100', 100, 32)
+        server = 'hinton'
+        save_dir = '/data/sung/checkpoint/base'
+        data_dir = '/data/sung/dataset'
+        data_type_and_num = ('cifar100', 100, 32) # Data Type, Num_class, Img_Size
 
-        exp_name = 'high'
+        exp_name = 'base_cifar100'
         start = 0
         comb_list = []
 
         num_per_gpu = 1
         network_type = 'resnet18'
-        gpus = ['0,1,2']
-        train_list = ['dafl']
-        batch_size = 1024
-        pretrain_list = ['false']
+        gpus = ['0,1']
+        train_list = ['dream']
+        batch_size = 128
 
         # Initialize
         only_init = True
@@ -57,31 +56,28 @@ if __name__=='__main__':
         # Resume Option
         resume = False
         resume_task_id = 0
-        # init_path = '/home/sung/checkpoint/dafl/init/0/task_0_dict.pt'
         init_path = None
 
         ix = 0
         for tr in train_list:
-            for pre in pretrain_list:
-                comb_list.append([tr, pre, ix])
-                ix += 1
+            comb_list.append([tr, ix])
+            ix += 1
 
     elif args.exp == 1:
-        server = 'nipa'
-        save_dir = '/home/sung/checkpoint/dafl'
-        data_dir = '/home/sung/dataset'
-        data_type_and_num = ('cifar100', 100, 32)
+        server = 'hinton'
+        save_dir = '/data/sung/checkpoint/dreamer'
+        data_dir = '/data/sung/dataset'
+        data_type_and_num = ('cifar100', 100, 32) # Data Type, Num_class, Img_Size
 
-        exp_name = 'generate'
+        exp_name = 'imp'
         start = 0
         comb_list = []
 
         num_per_gpu = 1
         network_type = 'resnet18'
-        gpus = ['1,2']
-        train_list = ['dafl']
-        batch_size = 512
-        pretrain_list = ['false']
+        gpus = ['0,1']
+        train_list = ['dream']
+        batch_size = 128
 
         # Initialize
         only_init = False
@@ -89,13 +85,12 @@ if __name__=='__main__':
         # Resume Option
         resume = True
         resume_task_id = 1
-        init_path = '/home/sung/checkpoint/dafl/high/0/task_0_dict.pt'
+        init_path = '/data/sung/checkpoint/base/base_cifar100/0/task_0_dict.pt'
 
         ix = 0
         for tr in train_list:
-            for pre in pretrain_list:
-                comb_list.append([tr, pre, ix])
-                ix += 1
+            comb_list.append([tr, ix])
+            ix += 1
 
     else:
         raise('Select Proper Experiment Number')
@@ -133,8 +128,6 @@ if __name__=='__main__':
             train_type = str(comb_ix[0])
             json_train_path = '../config/base_train_%s.json' %train_type
             json_train = load_json(json_train_path)
-
-            json_train['pretrain_new_model'] = True if str(comb_ix[1]) == 'true' else False
             json_train['only_init'] = only_init
             json_train['resume'] = resume
             json_train['resume_task_id'] = resume_task_id

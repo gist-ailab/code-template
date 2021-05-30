@@ -6,6 +6,30 @@ import os
 from random import shuffle
 import torch
 
+
+class Concat_dset(Dataset):
+    def __init__(self, dset1, dset2, old_class=10):
+        self.dset1 = dset1
+        self.dset2 = dset2
+
+        self.old_class = old_class
+
+        self.targets = list(self.dset1.targets) + list(np.array(self.dset2.targets) + old_class)
+
+    def __len__(self):
+        return len(self.dset1) + len(self.dset2)
+
+    def __getitem__(self, index):
+        if index < len(self.dset1):
+            img, label = self.dset1.__getitem__(index)
+        else:
+            img, label = self.dset2.__getitem__(index - len(self.dset1))
+            label += self.old_class
+
+        return img, label
+
+
+
 def load_cifar10(option):
     tr_transform = transforms.Compose([
         transforms.RandomCrop(32, padding=4),
@@ -44,6 +68,33 @@ def load_cifar100(option):
     val_dataset = torchvision.datasets.CIFAR100(root=os.path.join(option.result['data']['data_dir'], option.result['data']['data_type']), train=False, download=True, transform=val_transform)
     ex_dataset = torchvision.datasets.CIFAR100(root=os.path.join(option.result['data']['data_dir'], option.result['data']['data_type']), train=True, download=True, transform=val_transform)
     return tr_dataset, val_dataset, ex_dataset
+
+
+def load_cifar110(option):
+    tr_transform = transforms.Compose([
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5071, 0.4866, 0.4409), (0.2009, 0.1984, 0.2023))
+    ])
+
+
+    val_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5071, 0.4866, 0.4409), (0.2009, 0.1984, 0.2023))
+    ])
+
+    tr_dset1 = torchvision.datasets.CIFAR10(root=os.path.join(option.result['data']['data_dir'], option.result['data']['data_type']), train=True, download=True, transform=tr_transform)
+    tr_dset2 = torchvision.datasets.CIFAR100(root=os.path.join(option.result['data']['data_dir'], option.result['data']['data_type']), train=True, download=True, transform=tr_transform)
+    Concat_dset(tr_dset1, tr_dset2, old_class=10)
+
+    val_dset1 = torchvision.datasets.CIFAR10(root=os.path.join(option.result['data']['data_dir'], option.result['data']['data_type']), train=False, download=True, transform=val_transform)
+    val_dset2 = torchvision.datasets.CIFAR100(root=os.path.join(option.result['data']['data_dir'], option.result['data']['data_type']), train=False, download=True, transform=val_transform)
+    Concat_dset(val_dset1, val_dset2, old_class=10)
+
+    ex_dset1 = torchvision.datasets.CIFAR10(root=os.path.join(option.result['data']['data_dir'], option.result['data']['data_type']), train=True, download=True, transform=val_transform)
+    ex_dset2 = torchvision.datasets.CIFAR100(root=os.path.join(option.result['data']['data_dir'], option.result['data']['data_type']), train=True, download=True, transform=val_transform)
+    Concat_dset(ex_dset1, ex_dset2, old_class=10)
 
 
 def load_imagenet(option):
@@ -93,6 +144,8 @@ def load_data(option, data_type='train'):
         tr_d, val_d, ex_d = load_cifar10(option)
     elif option.result['data']['data_type'] == 'cifar100':
         tr_d, val_d, ex_d = load_cifar100(option)
+    elif option.result['data']['data_type'] == 'cifar110':
+        tr_d, val_d, ex_d = load_cifar110(option)
     elif option.result['data']['data_type'] == 'imagenet':
         tr_d, val_d, ex_d = load_imagenet(option)
     elif option.result['data']['data_type'] == 'food101':
@@ -158,13 +211,9 @@ class IncrementalSet(Dataset):
             shuffle(self.index_list)
 
     def update_exemplar(self, exemplar):
-        self.exemplary = [e for ex in exemplar for e in ex]
+        self.exemplary = exemplar
         self.index_list = list(range(len(self.target_index) + len(self.exemplary)))
         shuffle(self.index_list)
-
-    def get_image_class(self, label):
-        self.target_label_index = np.where(self.dataset_label == label)[0]
-        return [self.dataset_exemplar.__getitem__(index) for index in self.target_label_index]
 
     def __len__(self):
         return len(self.target_index) + len(self.exemplary)
@@ -178,3 +227,17 @@ class IncrementalSet(Dataset):
             image, label = self.exemplary[index - len(self.target_index)]
 
         return image, label
+
+
+if __name__=='__main__':
+    val_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5071, 0.4866, 0.4409), (0.2009, 0.1984, 0.2023))
+    ])
+
+    dset1 = torchvision.datasets.CIFAR10(root='/data/sung/dataset/cifar10', train=False, download=True, transform=val_transform)
+    dset2 = torchvision.datasets.CIFAR100(root='/data/sung/dataset/cifar100', train=False, download=True, transform=val_transform)
+
+    out = Concat_dset(dset1, dset2, old_class=10)
+    for ind in range(10000, 15000):
+        print(out.__getitem__(ind)[1])
