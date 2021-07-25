@@ -99,7 +99,6 @@ def train(option, rank, epoch, model, criterion, optimizer, multi_gpu, tr_loader
 
 def validation(option, rank, epoch, model, criterion, val_loader, scaler, neptune):
     num_gpu = len(option.result['train']['gpu'].split(','))
-    merge = option.result['train']['merge']
 
     # For Log
     mean_loss = 0.
