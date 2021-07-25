@@ -34,7 +34,7 @@ def cleanup():
 
 def main(rank, option, resume, save_folder):
     # Basic Options
-    resume_path = os.path.join(save_folder, 'best_model.pt')
+    resume_path = os.path.join(save_folder, 'last_dict.pt')
 
     num_gpu = len(option.result['train']['gpu'].split(','))
 
@@ -48,18 +48,28 @@ def main(rank, option, resume, save_folder):
 
     # Logger
     if (rank == 0) or (rank == 'cuda'):
-        neptune.init('sunghoshin/test', api_token='eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vdWkubmVwdHVuZS5haSIsImFwaV91cmwiOiJodHRwczovL3VpLm5lcHR1bmUuYWkiLCJhcGlfa2V5IjoiYzdlYWFkMjctOWExMS00YTRlLWI0MWMtY2FhNmIyNzZlYTIyIn0=')
-        exp_name, exp_num = save_folder.split('/')[-2], save_folder.split('/')[-1]
-        neptune.create_experiment(params={'exp_name':exp_name, 'exp_num':exp_num},
+        token = 'eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiI5MTQ3MjY2Yy03YmM4LTRkOGYtOWYxYy0zOTk3MWI0ZDY3M2MifQ=='
+        neptune.init('sunghoshin/imp', api_token=token)
+        neptune.create_experiment(params={'exp_name':args.exp_name, 'exp_num':args.exp_num},
                                   tags=['inference:True'])
 
     # Load Model
-    num_class = option.result['data']['num_class']
-    model = load_model(option, num_class)
+    merge = option.result['train']['merge']
+    model = load_model(option, merge)
     criterion = load_loss(option)
 
     if resume:
-        model.load_state_dict(torch.load(resume_path))
+        model.load_state_dict(torch.load(resume_path)['model'][0])
+
+
+    # Print Attention
+    s_max = option.result['train']['s_max']
+    sigmoid = nn.Sigmoid()
+    for _, name in model.name_list:
+        print(name)
+        print(sigmoid(getattr(model, name) * s_max))
+
+    exit()
 
     # Multi-Processing GPUs
     if ddp:
@@ -104,13 +114,13 @@ def main(rank, option, resume, save_folder):
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description='')
-    parser.add_argument('--save_dir', type=str, default='/home/sung/checkpoint/CL')
-    parser.add_argument('--exp_name', type=str, default='cifar10-marker')
-    parser.add_argument('--exp_num', type=int, default=0)
+    parser.add_argument('--save_dir', type=str, default='/home/sung/checkpoint/merge')
+    parser.add_argument('--exp_name', type=str, default='imp')
+    parser.add_argument('--exp_num', type=int, default=1)
 
-    parser.add_argument('--gpu', type=str, default='0,1,2')
-    parser.add_argument('--data_type', type=str, default='cifar10')
-    parser.add_argument('--batch', type=int, default=512)
+    parser.add_argument('--gpu', type=str, default='0')
+    parser.add_argument('--data_type', type=str, default='imagenet')
+    parser.add_argument('--batch', type=int, default=256)
     args = parser.parse_args()
 
 

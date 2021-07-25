@@ -1,9 +1,14 @@
+import sys
+sys.path.append('../external_API')
 import json
 import numpy as np
 import pickle
 import argparse
 import os
-import neptune
+import neptune.new as neptune
+import numpy as np
+import warnings
+warnings.filterwarnings('ignore')
 
 import torch
 import torch.nn as nn
@@ -14,31 +19,34 @@ from module.load_module import load_model, load_loss, load_optimizer, load_sched
 from utility.utils import config, train_module
 from utility.earlystop import EarlyStopping
 
-from data.dataset import load_data
+from data.dataset import load_data, IncrementalSet
 
 from copy import deepcopy
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from utility.distributed import apply_gradient_allreduce, reduce_tensor
-
+import pathlib
 
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '12355'
+
     # initialize the process group
     dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
 
 def cleanup():
     dist.destroy_process_group()
 
-def main(rank, option, resume, save_folder):
+def main(rank, option, resume, save_folder, log):
     # Basic Options
+    train_type = option.result['train']['train_type']
+
     resume_path = os.path.join(save_folder, 'last_dict.pt')
-
-    num_gpu = len(option.result['train']['gpu'].split(','))
-
     total_epoch = option.result['train']['total_epoch']
+
+    # GPU Configuration
+    num_gpu = len(option.result['train']['gpu'].split(','))
     multi_gpu = len(option.result['train']['gpu'].split(',')) > 1
     if multi_gpu:
         ddp = option.result['train']['ddp']
@@ -52,19 +60,53 @@ def main(rank, option, resume, save_folder):
     if (rank == 0) or (rank == 'cuda'):
         token = 'eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiI5MTQ3MjY2Yy03YmM4LTRkOGYtOWYxYy0zOTk3MWI0ZDY3M2MifQ=='
 
-        neptune.init('sunghoshin/imp', api_token=token)
+        if log:
+            mode = 'async'
+        else:
+            mode = 'debug'
+
+        if resume and option.result['meta']['neptune_id'] is not None:
+            run = neptune.init('sunghoshin/revisit', api_token=token,
+                               capture_stdout=False,
+                               capture_stderr=False,
+                               capture_hardware_metrics=False,
+                               run = option.result['meta']['neptune_id'],
+                               mode = mode
+                               )
+        else:
+            run = neptune.init('sunghoshin/revisit', api_token=token,
+                               capture_stdout=False,
+                               capture_stderr=False,
+                               capture_hardware_metrics=False,
+                               mode = mode
+                               )
+
+        neptune_id = str(run.__dict__['_short_id'])
+        option.result['meta']['neptune_id'] = neptune_id
+
         exp_name, exp_num = save_folder.split('/')[-2], save_folder.split('/')[-1]
-        neptune.create_experiment(params={'exp_name':exp_name, 'exp_num':exp_num},
-                                  tags=['inference:False'])
+        run['exp_name'] = exp_name
+        run['exp_num'] = exp_num
+
+        cfg = option.result
+        for key in cfg.keys():
+            for key_ in cfg[key].keys():
+                cfg_name = 'config/%s/%s' %(key, key_)
+                run[cfg_name] = cfg[key][key_]
+    else:
+        run = None
 
     # Load Model
     model = load_model(option)
     criterion = load_loss(option)
-    save_module = train_module(total_epoch, model, criterion, multi_gpu)
+    save_module = train_module(total_epoch, criterion, multi_gpu)
 
     if resume:
         save_module.import_module(resume_path)
         model.load_state_dict(save_module.save_dict['model'][0])
+
+        if save_module.save_dict['save_epoch'] == (int(option.result['train']['total_epoch']) - 1):
+            return None
 
     # Multi-Processing GPUs
     if ddp:
@@ -107,6 +149,11 @@ def main(rank, option, resume, save_folder):
     tr_dataset = load_data(option, data_type='train')
     val_dataset = load_data(option, data_type='val')
 
+    target_list = list(range(0, option.result['data']['num_class']))
+
+    tr_dataset = IncrementalSet(tr_dataset, target_list=target_list, shuffle_label=True, prop=option.result['train']['train_prop'])
+    val_dataset = IncrementalSet(val_dataset, target_list=target_list, shuffle_label=False, prop=option.result['train']['val_prop'])
+
     if ddp:
         tr_sampler = torch.utils.data.distributed.DistributedSampler(dataset=tr_dataset,
                                                                      num_replicas=num_gpu, rank=rank)
@@ -114,14 +161,16 @@ def main(rank, option, resume, save_folder):
                                                                      num_replicas=num_gpu, rank=rank)
 
         tr_loader = torch.utils.data.DataLoader(dataset=tr_dataset, batch_size=batch_size,
-                                                  shuffle=False, num_workers=4*num_gpu, pin_memory=pin_memory,
+                                                  shuffle=False, num_workers=option.result['train']['num_workers'], pin_memory=pin_memory,
                                                   sampler=tr_sampler)
         val_loader = torch.utils.data.DataLoader(dataset=val_dataset, batch_size=batch_size,
-                                                  shuffle=False, num_workers=4*num_gpu, pin_memory=pin_memory,
+                                                  shuffle=False, num_workers=option.result['train']['num_workers'], pin_memory=pin_memory,
                                                   sampler=val_sampler)
+
     else:
-        tr_loader = DataLoader(tr_dataset, batch_size=batch_size, shuffle=True, pin_memory=pin_memory, num_workers=4*num_gpu)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=4*num_gpu)
+        tr_loader = DataLoader(tr_dataset, batch_size=batch_size, shuffle=True, pin_memory=pin_memory, num_workers=option.result['train']['num_workers'])
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=option.result['train']['num_workers'])
+
 
     # Mixed Precision
     mixed_precision = option.result['train']['mixed_precision']
@@ -130,22 +179,28 @@ def main(rank, option, resume, save_folder):
     else:
         scaler = None
 
-    # Training
-    from module.trainer import naive_trainer
-    for epoch in range(save_module.init_epoch, save_module.total_epoch):
-        model.train()
-        model, optimizer, save_module = naive_trainer.train(option, rank, epoch, model, criterion, optimizer, \
-                                                            tr_loader, scaler, save_module, neptune, save_folder)
 
-        model.eval()
-        result = naive_trainer.validation(option, rank, epoch, model, criterion, val_loader, neptune)
+    # Training
+    for epoch in range(save_module.init_epoch, save_module.total_epoch):
+        if train_type == 'naive':
+            from module.trainer import naive_trainer
+
+            model.train()
+            model, optimizer, save_module = naive_trainer.train(option, rank, epoch, model, criterion, optimizer, multi_gpu, \
+                                                                tr_loader, scaler, save_module, run, save_folder)
+
+            model.eval()
+            result = naive_trainer.validation(option, rank, epoch, model, criterion, val_loader, scaler, run)
+
+        else:
+            raise('Select Proper Train-Type')
+
 
         if scheduler is not None:
-            scheduler.step()
+            scheduler.step(result['val_loss'])
             save_module.save_dict['scheduler'] = [scheduler.state_dict()]
         else:
             save_module.save_dict['scheduler'] = None
-
 
         # Save the last-epoch module
         if (rank == 0) or (rank == 'cuda'):
@@ -175,15 +230,18 @@ def main(rank, option, resume, save_folder):
         # Save the best_model
         torch.save(early.model, os.path.join(save_folder, 'best_model.pt'))
 
-
     if ddp:
         cleanup()
+
+    return None
+
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description='')
     parser.add_argument('--save_dir', type=str, default='/HDD1/sung/checkpoint/')
     parser.add_argument('--exp_name', type=str, default='imagenet_norm')
     parser.add_argument('--exp_num', type=int, default=1)
+    parser.add_argument('--log', type=lambda x: x.lower()=='true', default=True)
     args = parser.parse_args()
 
     # Configure
@@ -193,11 +251,15 @@ if __name__=='__main__':
     option.get_config_data()
     option.get_config_network()
     option.get_config_train()
+    option.get_config_meta()
 
     # Resume Configuration
     resume = option.result['train']['resume']
     resume_path = os.path.join(save_folder, 'last_dict.pt')
     config_path = os.path.join(save_folder, 'last_config.json')
+
+    # BASE FOLDER
+    option.result['train']['base_folder'] = str(pathlib.Path(__file__).parent.resolve())
 
     if resume:
         if (os.path.isfile(resume_path) == False) or (os.path.isfile(config_path) == False):
@@ -211,8 +273,8 @@ if __name__=='__main__':
             option.result['train']['gpu'] = gpu
 
     # Data Directory
-    option.result['data']['data_dir'] = os.path.join(option.result['data']['data_dir'], option.result['data']['data_type'])
-
+    if not resume:
+        option.result['data']['data_dir'] = os.path.join(option.result['data']['data_dir'], option.result['data']['data_type'])
 
     # GPU
     os.environ["CUDA_VISIBLE_DEVICES"] = option.result['train']['gpu']
@@ -224,7 +286,7 @@ if __name__=='__main__':
         ddp = False
 
     if ddp:
-        mp.spawn(main, args=(option,resume,save_folder,), nprocs=num_gpu, join=True)
+        mp.spawn(main, args=(option, resume, save_folder, args.log,), nprocs=num_gpu, join=True)
     else:
-        main('cuda', option, resume, save_folder)
+        main('cuda', option, resume, save_folder, args.log)
 

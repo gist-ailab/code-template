@@ -1,17 +1,27 @@
 {
-  "gpu": "1,2,3",
+  "gpu": "0,1",
   "resume": false,
 
-  "total_epoch": 200,
-  "lr": 0.1,
-  "scheduler": "cosine",
-  "batch_size": 512,
+  "total_epoch": 100,
+  "scheduler": "step",
+  "batch_size": 256,
 
-  "ddp": true,
+  "ddp": false,
   "pin_memory": true,
   "mixed_precision": false,
+  "num_workers": 8,
+
+  "train_prop" : 1.0,
+  "val_prop" : 1.0,
 
   "patience": 1000,
-  "early_loss": true,
-  "save_epoch": 10
+  "early_loss": false,
+  "save_epoch": 10,
+
+  "optimizer": "sgd",
+  "lr": 0.1,
+  "weight_decay": 1e-4,
+
+  "attn_type": "none",
+  "train_type": "naive"
 }

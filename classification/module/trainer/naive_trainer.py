@@ -3,7 +3,9 @@ import torch
 from tqdm import tqdm
 import os
 from utility.distributed import apply_gradient_allreduce, reduce_tensor
+import torch.nn as nn
 
+# Utility
 def accuracy(output, target, topk=(1,)):
     """Computes the accuracy over the k top predictions for the specified values of k"""
     with torch.no_grad():
@@ -21,7 +23,8 @@ def accuracy(output, target, topk=(1,)):
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
 
-def train(option, rank, epoch, model, criterion, optimizer, tr_loader, scaler, save_module, neptune, save_folder):
+def train(option, rank, epoch, model, criterion, optimizer, multi_gpu, tr_loader, scaler, save_module, neptune, save_folder):
+    # GPU setup
     num_gpu = len(option.result['train']['gpu'].split(','))
     multi_gpu = num_gpu > 1
 
@@ -44,6 +47,7 @@ def train(option, rank, epoch, model, criterion, optimizer, tr_loader, scaler, s
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
+
         else:
             output = model(input)
             loss = criterion(output, label)
@@ -62,7 +66,6 @@ def train(option, rank, epoch, model, criterion, optimizer, tr_loader, scaler, s
             mean_loss += loss.item()
             mean_acc1 += acc_result[0]
             mean_acc5 += acc_result[1]
-
 
     # Train Result
     mean_acc1 /= len(tr_loader)
@@ -83,9 +86,9 @@ def train(option, rank, epoch, model, criterion, optimizer, tr_loader, scaler, s
         # Loggin
         print('Epoch-(%d/%d) - tr_ACC@1: %.2f, tr_ACC@5-%.2f, tr_loss:%.3f' %(epoch, option.result['train']['total_epoch'], \
                                                                             mean_acc1, mean_acc5, mean_loss))
-        neptune.log_metric('tr_loss', mean_loss)
-        neptune.log_metric('tr_acc1', mean_acc1)
-        neptune.log_metric('tr_acc5', mean_acc5)
+        neptune['result/tr_loss'].log(mean_loss)
+        neptune['result/tr_acc1'].log(mean_acc1)
+        neptune['result/tr_acc5'].log(mean_acc5)
 
         # Save
         if epoch % option.result['train']['save_epoch'] == 0:
@@ -94,8 +97,9 @@ def train(option, rank, epoch, model, criterion, optimizer, tr_loader, scaler, s
     return model, optimizer, save_module
 
 
-def validation(option, rank, epoch, model, criterion, val_loader, neptune):
+def validation(option, rank, epoch, model, criterion, val_loader, scaler, neptune):
     num_gpu = len(option.result['train']['gpu'].split(','))
+    merge = option.result['train']['merge']
 
     # For Log
     mean_loss = 0.
@@ -131,10 +135,10 @@ def validation(option, rank, epoch, model, criterion, val_loader, neptune):
         if (rank == 0) or (rank == 'cuda'):
             print('Epoch-(%d/%d) - val_ACC@1: %.2f, val_ACC@5-%.2f, val_loss:%.3f' % (epoch, option.result['train']['total_epoch'], \
                                                                                     mean_acc1, mean_acc5, mean_loss))
-            neptune.log_metric('val_loss', mean_loss)
-            neptune.log_metric('val_acc1', mean_acc1)
-            neptune.log_metric('val_acc5', mean_acc5)
-            neptune.log_metric('epoch', epoch)
+            neptune['result/val_loss'].log(mean_loss)
+            neptune['result/val_acc1'].log(mean_acc1)
+            neptune['result/val_acc5'].log(mean_acc5)
+            neptune['result/epoch'].log(epoch)
 
     result = {'acc1':mean_acc1, 'acc5':mean_acc5, 'val_loss':mean_loss}
     return result

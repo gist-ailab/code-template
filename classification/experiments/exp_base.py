@@ -4,7 +4,8 @@ import subprocess
 import os
 from multiprocessing import Process
 import argparse
-
+import warnings
+warnings.filterwarnings('ignore')
 
 def load_json(json_path):
     with open(json_path, 'r') as f:
@@ -38,24 +39,67 @@ if __name__=='__main__':
     json_meta_path = '../config/base_meta.json'
     json_meta = load_json(json_meta_path)
 
+    # Global Option
+    train_prop = 1.
+    val_prop = 1.
+
+    resume = False
+    mixed_precision = True
+
+    ddp = False
+
     # Setup Configuration for Each Experiments
-    if args.exp == 1:
+    if args.exp == 0:
         server = 'nipa'
-        save_dir = '/data/sung/checkpoint/CL'
-        data_dir = '/data/sung/dataset'
+        save_dir = '/home/sung/checkpoint/merge'
+        data_dir = '/home/sung/dataset'
         data_type_and_num = ('imagenet', 1000)
 
-        exp_name = 'test1'
+        exp_name = 'imp'
         start = 0
         ix = 0
         comb_list = []
 
-        num_per_gpu = 1
-        gpus = ['3,4,5,6,7']
-        epoch_list = [200]
+        w_d = 1e-4
+        lr = 0.1
+        epoch = 100
 
-        for epoch in epoch_list:
-            comb_list.append([epoch, ix])
+        batch_size = 256
+        mixed_precision = True
+        num_per_gpu = 1
+        gpus = ['0,1']
+        ddp = True
+
+        depth = 34
+
+        for t in ['0']:
+            comb_list.append([t, ix])
+            ix += 1
+
+    elif args.exp == 1:
+        server = 'nipa'
+        save_dir = '/home/sung/checkpoint/merge'
+        data_dir = '/home/sung/dataset'
+        data_type_and_num = ('cifar10', 10)
+
+        exp_name = 'imp'
+        start = 0
+        ix = 0
+        comb_list = []
+
+        w_d = 1e-4
+        lr = 0.1
+        epoch = 200
+
+        batch_size = 512
+        mixed_precision = True
+        num_per_gpu = 1
+        gpus = ['0']
+
+        depth = 18
+
+        for t in ['0']:
+            comb_list.append([t, ix])
             ix += 1
 
     else:
@@ -84,12 +128,27 @@ if __name__=='__main__':
             save_json(json_data, os.path.join(save_dir, exp_name, str(exp_num), 'data.json'))
 
             # Modify the network configuration
-            json_network
+            json_network['network_type'] = 'resnet%d' %int(depth)
             save_json(json_network, os.path.join(save_dir, exp_name, str(exp_num), 'network.json'))
 
             # Modify the train configuration
-            json_train['total_epoch'] = int(comb_ix[0])
             json_train['gpu'] = str(gpu)
+
+            json_train['lr'] = lr
+            json_train['weight_decay'] = w_d
+
+            json_train['total_epoch'] = epoch
+            json_train['batch_size'] = batch_size
+
+            json_train["mixed_precision"] = mixed_precision
+
+            json_train["resume"] = resume
+
+            json_train["train_prop"] = train_prop
+            json_train["val_prop"] = val_prop
+
+            json_train["ddp"] = ddp
+
             save_json(json_train, os.path.join(save_dir, exp_name, str(exp_num), 'train.json'))
 
             # Modify the meta configuration
@@ -98,8 +157,7 @@ if __name__=='__main__':
             save_json(json_meta, os.path.join(save_dir, exp_name, str(exp_num), 'meta.json'))
 
             # Run !
-            script = 'python ../main.py --save_dir %s --exp_name %s --exp_num %d' %(save_dir, exp_name, exp_num) \
-
+            script = 'python ../main.py --save_dir %s --exp_name %s --exp_num %d' %(save_dir, exp_name, exp_num)
             subprocess.call(script, shell=True)
 
 

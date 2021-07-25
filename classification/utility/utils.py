@@ -19,6 +19,10 @@ class config():
         config_train = self.load_json(os.path.join(self.config_dir, 'train.json'))
         self.result['train'] = config_train
 
+    def get_config_meta(self):
+        config_meta = self.load_json(os.path.join(self.config_dir, 'meta.json'))
+        self.result['meta'] = config_meta
+
     def load_json(self, json_path):
         with open(json_path, 'r') as f:
             out = json.load(f)
@@ -34,10 +38,9 @@ class config():
 
 
 class train_module():
-    def __init__(self, total_epoch, network, criterion, multi_gpu=False):
+    def __init__(self, total_epoch, criterion, multi_gpu=False):
         self.total_epoch = total_epoch
-        self.save_dict = {'network': network,
-                          'criterion': criterion,
+        self.save_dict = {'criterion': criterion,
                           'model': [],
                           'optimizer': [],
                           'scheduler': None,
