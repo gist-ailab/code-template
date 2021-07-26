@@ -1,0 +1,19 @@
+_BASE_: "base_configs/COCO-Detection/faster_rcnn_R_50_FPN_3x.yaml"
+DATASETS:
+  TRAIN: ("KDN_train", )
+  TEST: ("KDN_val", )
+MODEL:
+  WEIGHTS: "checkpoint_enhancement/model_final.pth"
+  ROI_HEADS:
+    NUM_CLASSES: 4
+DATALOADER:
+  NUM_WORKERS: 4
+SOLVER:
+  IMS_PER_BATCH: 32
+  BASE_LR: 0.05
+  STEPS: (500, 2000, 4000)
+  WARMUP_ITERS: 1000
+  MAX_ITER: 5000
+  GAMMA: 0.2
+  CHECKPOINT_PERIOD: 100
+OUTPUT_DIR: "checkpoint"
