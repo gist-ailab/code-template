@@ -4,6 +4,10 @@ from tqdm import tqdm
 import os
 from utility.distributed import apply_gradient_allreduce, reduce_tensor
 import torch.nn as nn
+from ray import tune
+from ray.tune import CLIReporter
+from ray.tune.schedulers import ASHAScheduler
+from functools import partial
 
 # Utility
 def accuracy(output, target, topk=(1,)):
@@ -23,7 +27,7 @@ def accuracy(output, target, topk=(1,)):
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
 
-def train(option, rank, epoch, model, criterion, optimizer, multi_gpu, tr_loader, scaler, save_module, neptune, save_folder):
+def train(option, rank, epoch, model, criterion, optimizer, multi_gpu, tr_loader, scaler, save_module, neptune, save_folder=''):
     # GPU setup
     num_gpu = len(option.result['train']['gpu'].split(','))
     multi_gpu = num_gpu > 1
@@ -73,26 +77,24 @@ def train(option, rank, epoch, model, criterion, optimizer, multi_gpu, tr_loader
     mean_loss /= len(tr_loader)
 
     # Saving Network Params
-    if multi_gpu:
-        model_param = model.module.state_dict()
-    else:
-        model_param = model.state_dict()
+    model_param = None
 
     save_module.save_dict['model'] = [model_param]
     save_module.save_dict['optimizer'] = [optimizer.state_dict()]
     save_module.save_dict['save_epoch'] = epoch
 
     if (rank == 0) or (rank == 'cuda'):
-        # Loggin
+        # Logging
         print('Epoch-(%d/%d) - tr_ACC@1: %.2f, tr_ACC@5-%.2f, tr_loss:%.3f' %(epoch, option.result['train']['total_epoch'], \
                                                                             mean_acc1, mean_acc5, mean_loss))
         neptune['result/tr_loss'].log(mean_loss)
         neptune['result/tr_acc1'].log(mean_acc1)
         neptune['result/tr_acc5'].log(mean_acc5)
 
-        # Save
-        if epoch % option.result['train']['save_epoch'] == 0:
-            torch.save(model_param, os.path.join(save_folder, 'epoch%d_model.pt' %epoch))
+        if not option.result['tune']['tuning']:
+            # Save
+            if epoch % option.result['train']['save_epoch'] == 0:
+                torch.save(model_param, os.path.join(save_folder, 'epoch%d_model.pt' %epoch))
 
     return model, optimizer, save_module
 
@@ -134,12 +136,16 @@ def validation(option, rank, epoch, model, criterion, val_loader, scaler, neptun
         if (rank == 0) or (rank == 'cuda'):
             print('Epoch-(%d/%d) - val_ACC@1: %.2f, val_ACC@5-%.2f, val_loss:%.3f' % (epoch, option.result['train']['total_epoch'], \
                                                                                     mean_acc1, mean_acc5, mean_loss))
+
             neptune['result/val_loss'].log(mean_loss)
             neptune['result/val_acc1'].log(mean_acc1)
             neptune['result/val_acc5'].log(mean_acc5)
             neptune['result/epoch'].log(epoch)
 
     result = {'acc1':mean_acc1, 'acc5':mean_acc5, 'val_loss':mean_loss}
+
+    if option.result['tune']['tuning']:
+        tune.report(loss=mean_loss, accuracy=mean_acc1)
     return result
 
 def test():

@@ -23,6 +23,10 @@ class config():
         config_meta = self.load_json(os.path.join(self.config_dir, 'meta.json'))
         self.result['meta'] = config_meta
 
+    def get_config_tune(self):
+        config_tune = self.load_json(os.path.join(self.config_dir, 'tune.json'))
+        self.result['tune'] = config_tune
+
     def load_json(self, json_path):
         with open(json_path, 'r') as f:
             out = json.load(f)

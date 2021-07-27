@@ -27,35 +27,46 @@ import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from utility.distributed import apply_gradient_allreduce, reduce_tensor
 import pathlib
-import random
 
-def setup(rank, world_size, master_port):
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = master_port
+import ray
+from ray import tune
+from ray.tune import CLIReporter
+from ray.tune.schedulers import ASHAScheduler
+from functools import partial
+from hyper_tune import load_configs
+import shutil
 
-    # initialize the process group
-    dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
-
-def cleanup():
-    dist.destroy_process_group()
-
-def main(rank, option, resume, save_folder, log, master_port):
-    # Memory Limitation
-    torch.cuda.set_per_process_memory_fraction(option.result['train']['gpu_fraction'], device=None)
+def main(configs, option, log=False):
+    for key, item in configs.items():
+        option.result[key.split('/')[0]][key.split('/')[1]] = item
 
     # Basic Options
     train_type = option.result['train']['train_type']
+    rank = 'cuda'
+    resume = False
+    multi_gpu = False
 
-    resume_path = os.path.join(save_folder, 'last_dict.pt')
     total_epoch = option.result['train']['total_epoch']
 
+    # Load Model
+    model = load_model(option)
+    criterion = load_loss(option)
+    save_module = train_module(total_epoch, criterion, multi_gpu)
+
     # GPU Configuration
-    num_gpu = len(option.result['train']['gpu'].split(','))
-    multi_gpu = len(option.result['train']['gpu'].split(',')) > 1
-    if multi_gpu:
-        ddp = option.result['train']['ddp']
+    ddp = option.result['tune']['ddp']
+    num_gpu = option.result['tune']['gpus_per_trial']
+
+    if ddp:
+        multi_gpu = True
     else:
-        ddp = False
+        device = "cuda"
+        if torch.cuda.device_count() > 1:
+            multi_gpu = True
+            model = nn.DataParallel(model)
+        else:
+            multi_gpu = False
+        model.to(device)
 
     scheduler = option.result['train']['scheduler']
     batch_size, pin_memory = option.result['train']['batch_size'], option.result['train']['pin_memory']
@@ -69,19 +80,21 @@ def main(rank, option, resume, save_folder, log, master_port):
         else:
             mode = 'debug'
 
+        hard_ware_monitoring = True
+
         if resume and option.result['meta']['neptune_id'] is not None:
-            run = neptune.init('sunghoshin/revisit', api_token=token,
-                               capture_stdout=False,
-                               capture_stderr=False,
-                               capture_hardware_metrics=False,
+            run = neptune.init('sunghoshin/module-merge', api_token=token,
+                               capture_stdout=hard_ware_monitoring,
+                               capture_stderr=hard_ware_monitoring,
+                               capture_hardware_metrics=hard_ware_monitoring,
                                run = option.result['meta']['neptune_id'],
                                mode = mode
                                )
         else:
-            run = neptune.init('sunghoshin/revisit', api_token=token,
-                               capture_stdout=False,
-                               capture_stderr=False,
-                               capture_hardware_metrics=False,
+            run = neptune.init('sunghoshin/module-merge', api_token=token,
+                               capture_stdout=hard_ware_monitoring,
+                               capture_stderr=hard_ware_monitoring,
+                               capture_hardware_metrics=hard_ware_monitoring,
                                mode = mode
                                )
 
@@ -92,59 +105,26 @@ def main(rank, option, resume, save_folder, log, master_port):
         run['exp_name'] = exp_name
         run['exp_num'] = exp_num
 
+        # Log Basic Option
         cfg = option.result
         for key in cfg.keys():
             for key_ in cfg[key].keys():
                 cfg_name = 'config/%s/%s' %(key, key_)
                 run[cfg_name] = cfg[key][key_]
+
+
+        # Log Tunning Params
+        for key, item in configs.items():
+            tune_name = 'tune/%s' %key.split('/')[1]
+            run[tune_name] = item
+
     else:
         run = None
 
-    # Load Model
-    model = load_model(option)
-    criterion = load_loss(option)
-    save_module = train_module(total_epoch, criterion, multi_gpu)
+    optimizer = load_optimizer(option, model.parameters())
+    if scheduler is not None:
+        scheduler = load_scheduler(option, optimizer)
 
-    if resume:
-        save_module.import_module(resume_path)
-        model.load_state_dict(save_module.save_dict['model'][0])
-
-        if save_module.save_dict['save_epoch'] == (int(option.result['train']['total_epoch']) - 1):
-            return None
-
-    # Multi-Processing GPUs
-    if ddp:
-        setup(rank, num_gpu, master_port)
-        torch.manual_seed(0)
-        torch.cuda.set_device(rank)
-
-        model.to(rank)
-        model = DDP(model, device_ids=[rank])
-        model = apply_gradient_allreduce(model)
-
-        criterion.to(rank)
-
-    else:
-        if multi_gpu:
-            model = nn.DataParallel(model).to(rank)
-        else:
-            model = model.to(rank)
-
-    # Optimizer and Scheduler
-    if resume:
-        # Load Optimizer
-        optimizer = load_optimizer(option, model.parameters())
-        optimizer.load_state_dict(save_module.save_dict['optimizer'][0])
-
-        # Load Scheduler
-        if scheduler is not None:
-            scheduler = load_scheduler(option, optimizer)
-            scheduler.load_state_dict(save_module.save_dict['scheduler'][0])
-
-    else:
-        optimizer = load_optimizer(option, model.parameters())
-        if scheduler is not None:
-            scheduler = load_scheduler(option, optimizer)
 
     # Early Stopping
     early = EarlyStopping(patience=option.result['train']['patience'])
@@ -165,15 +145,15 @@ def main(rank, option, resume, save_folder, log, master_port):
                                                                      num_replicas=num_gpu, rank=rank)
 
         tr_loader = torch.utils.data.DataLoader(dataset=tr_dataset, batch_size=batch_size,
-                                                  shuffle=False, num_workers=option.result['train']['num_workers'], pin_memory=pin_memory,
+                                                  shuffle=False, num_workers=option.result['tune']['cpus_per_trial'], pin_memory=pin_memory,
                                                   sampler=tr_sampler)
         val_loader = torch.utils.data.DataLoader(dataset=val_dataset, batch_size=batch_size,
-                                                  shuffle=False, num_workers=option.result['train']['num_workers'], pin_memory=pin_memory,
+                                                  shuffle=False, num_workers=option.result['tune']['cpus_per_trial'], pin_memory=pin_memory,
                                                   sampler=val_sampler)
 
     else:
-        tr_loader = DataLoader(tr_dataset, batch_size=batch_size, shuffle=True, pin_memory=pin_memory, num_workers=option.result['train']['num_workers'])
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=option.result['train']['num_workers'])
+        tr_loader = DataLoader(tr_dataset, batch_size=batch_size, shuffle=True, pin_memory=pin_memory, num_workers=option.result['tune']['cpus_per_trial'])
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, pin_memory=pin_memory, num_workers=option.result['tune']['cpus_per_trial'])
 
 
     # Mixed Precision
@@ -206,20 +186,9 @@ def main(rank, option, resume, save_folder, log, master_port):
         else:
             save_module.save_dict['scheduler'] = None
 
-        # Save the last-epoch module
-        if (rank == 0) or (rank == 'cuda'):
-            save_module_path = os.path.join(save_folder, 'last_dict.pt')
-            save_module.export_module(save_module_path)
-
-            save_config_path = os.path.join(save_folder, 'last_config.json')
-            option.export_config(save_config_path)
-
 
         # Early Stopping
-        if multi_gpu:
-            param = deepcopy(model.module.state_dict())
-        else:
-            param = deepcopy(model.state_dict())
+        param = None
 
         if option.result['train']['early_loss']:
             early(result['val_loss'], param, result)
@@ -228,14 +197,6 @@ def main(rank, option, resume, save_folder, log, master_port):
 
         if early.early_stop == True:
             break
-
-
-    if (rank == 0) or (rank == 'cuda'):
-        # Save the best_model
-        torch.save(early.model, os.path.join(save_folder, 'best_model.pt'))
-
-    if ddp:
-        cleanup()
 
     return None
 
@@ -250,6 +211,10 @@ if __name__=='__main__':
 
     # Configure
     save_folder = os.path.join(args.save_dir, args.exp_name, str(args.exp_num))
+
+    if os.path.isdir(os.path.join(save_folder, 'logging')):
+        shutil.rmtree(os.path.join(save_folder, 'logging'))
+
     os.makedirs(save_folder, exist_ok=True)
     option = config(save_folder)
     option.get_config_data()
@@ -258,43 +223,44 @@ if __name__=='__main__':
     option.get_config_meta()
     option.get_config_tune()
 
-
-    # Resume Configuration
-    resume = option.result['train']['resume']
-    resume_path = os.path.join(save_folder, 'last_dict.pt')
-    config_path = os.path.join(save_folder, 'last_config.json')
+    # GPU
+    os.environ["CUDA_VISIBLE_DEVICES"] = option.result['train']['gpu']
+    ddp = option.result['train']['ddp']
 
     # BASE FOLDER
     option.result['train']['base_folder'] = str(pathlib.Path(__file__).parent.resolve())
+    option.result['data']['data_dir'] = os.path.join(option.result['data']['data_dir'], option.result['data']['data_type'])
 
-    if resume:
-        if (os.path.isfile(resume_path) == False) or (os.path.isfile(config_path) == False):
-            resume = False
-        else:
-            gpu = option.result['train']['gpu']
+    # Ray Option
+    ray.init(log_to_driver=False)
 
-            option = config(save_folder)
-            option.import_config(config_path)
+    num_trials = option.result['tune']['num_trials']
 
-            option.result['train']['gpu'] = gpu
+    scheduler = ASHAScheduler(
+        metric="loss",
+        mode="min",
+        max_t=option.result['train']['total_epoch'],
+        grace_period=1,
+        reduction_factor=2)
 
-    # Data Directory
-    if not resume:
-        option.result['data']['data_dir'] = os.path.join(option.result['data']['data_dir'], option.result['data']['data_type'])
+    # Load Tuning Parameters
+    configs = load_configs(args.exp_name)
 
-    # GPU
-    os.environ["CUDA_VISIBLE_DEVICES"] = option.result['train']['gpu']
-    num_gpu = len(option.result['train']['gpu'].split(','))
+    # RUN!
+    os.environ["TUNE_DISABLE_AUTO_CALLBACK_LOGGERS"] = "1"
+    result = tune.run(
+        partial(main, option=option, log=args.log),
+        resources_per_trial={"cpu": option.result['tune']['cpus_per_trial'], "gpu": option.result['tune']['gpus_per_trial']},
+        config=configs,
+        num_samples=num_trials,
+        scheduler=scheduler,
+        local_dir=save_folder,
+        name='logging',
+        callbacks=[ray.tune.logger.JsonLoggerCallback()])
 
-    multi_gpu = num_gpu > 1
-    if multi_gpu:
-        ddp = option.result['train']['ddp']
-    else:
-        ddp = False
-
-    master_port = str(random.randint(100,10000))
-
-    if ddp:
-        mp.spawn(main, args=(option, resume, save_folder, args.log, master_port, ), nprocs=num_gpu, join=True)
-    else:
-        main('cuda', option, resume, save_folder, args.log, master_port)
+    best_trial = result.get_best_trial("loss", "min", "last")
+    print("Best trial config: {}".format(best_trial.config))
+    print("Best trial final validation loss: {}".format(
+        best_trial.last_result["loss"]))
+    print("Best trial final validation accuracy: {}".format(
+        best_trial.last_result["accuracy"]))

@@ -20,7 +20,7 @@ def save_json(json_data, json_path):
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--exp', type=int, default=1)
+    parser.add_argument('--exp', type=int, default=0)
     args = parser.parse_args()
 
     # Data Configuration
@@ -67,12 +67,12 @@ if __name__=='__main__':
         batch_size = 256
         mixed_precision = True
         num_per_gpu = 1
-        gpus = ['0,1']
+        gpus = ['0,1,2', '0,1,2', '0,1,2']
         ddp = True
 
         depth = 34
 
-        for t in ['0']:
+        for t in gpus:
             comb_list.append([t, ix])
             ix += 1
 
