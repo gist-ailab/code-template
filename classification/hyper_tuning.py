@@ -33,7 +33,7 @@ from ray import tune
 from ray.tune import CLIReporter
 from ray.tune.schedulers import ASHAScheduler
 from functools import partial
-from hyper_tune import load_configs
+from tuning import load_configs
 import shutil
 
 def main(configs, option, log=False):
@@ -49,9 +49,9 @@ def main(configs, option, log=False):
     total_epoch = option.result['train']['total_epoch']
 
     # Load Model
-    model = load_model(option)
-    criterion = load_loss(option)
-    save_module = train_module(total_epoch, criterion, multi_gpu)
+    model_list = load_model(option)
+    criterion_list = load_loss(option)
+    save_module = train_module(total_epoch, criterion_list, multi_gpu)
 
     # GPU Configuration
     ddp = option.result['tune']['ddp']
@@ -63,10 +63,14 @@ def main(configs, option, log=False):
         device = "cuda"
         if torch.cuda.device_count() > 1:
             multi_gpu = True
-            model = nn.DataParallel(model)
+            
+            for ix in range(len(model_list)):
+                model_list[ix] = nn.DataParallel(model_list[ix])
         else:
             multi_gpu = False
-        model.to(device)
+        
+        for ix in range(len(model_list)):
+            model_list[ix].to(device)
 
     scheduler = option.result['train']['scheduler']
     batch_size, pin_memory = option.result['train']['batch_size'], option.result['train']['pin_memory']
@@ -121,9 +125,9 @@ def main(configs, option, log=False):
     else:
         run = None
 
-    optimizer = load_optimizer(option, model.parameters())
+    optimizer_list = load_optimizer(option, model_list)
     if scheduler is not None:
-        scheduler = load_scheduler(option, optimizer)
+        scheduler = load_scheduler(option, optimizer_list)
 
 
     # Early Stopping
@@ -169,12 +173,18 @@ def main(configs, option, log=False):
         if train_type == 'naive':
             from module.trainer import naive_trainer
 
-            model.train()
-            model, optimizer, save_module = naive_trainer.train(option, rank, epoch, model, criterion, optimizer, multi_gpu, \
-                                                                tr_loader, scaler, save_module, run, save_folder)
+            # Train
+            for model in model_list:
+                model.train()
+            
+            save_module = naive_trainer.train(option, rank, epoch, model_list, criterion_list, optimizer_list, multi_gpu, \
+                                              tr_loader, scaler, save_module, run, save_folder)
 
-            model.eval()
-            result = naive_trainer.validation(option, rank, epoch, model, criterion, val_loader, scaler, run)
+            # Evaluation
+            for model in model_list:
+                model.eval()
+                
+            result = naive_trainer.validation(option, rank, epoch, model_list, criterion_list, val_loader, scaler, run)
 
         else:
             raise('Select Proper Train-Type')

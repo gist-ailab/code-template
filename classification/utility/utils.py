@@ -42,9 +42,9 @@ class config():
 
 
 class train_module():
-    def __init__(self, total_epoch, criterion, multi_gpu=False):
+    def __init__(self, total_epoch, criterion_list, multi_gpu=False):
         self.total_epoch = total_epoch
-        self.save_dict = {'criterion': criterion,
+        self.save_dict = {'criterion': criterion_list,
                           'model': [],
                           'optimizer': [],
                           'scheduler': None,

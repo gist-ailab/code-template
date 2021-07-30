@@ -31,18 +31,26 @@ def load_model(option):
     manager = model_manager(option)
     manager.load_network()
     model = manager.model
-    return model
+    
+    model_list = [model]
+    return model_list
 
-def load_optimizer(option, param):
+def load_optimizer(option, model_list):
+    param = model_list[0].parameters()
+    
     if option.result['train']['optimizer'] == 'sgd':
         optim = torch.optim.SGD(param, lr=option.result['train']['lr'], momentum=0.9, weight_decay=option.result['train']['weight_decay'])
     elif option.result['train']['optimizer'] == 'adam':
         optim = torch.optim.Adam(param, lr=option.result['train']['lr'])
     else:
         raise('Select Proper Optimizer')
-    return optim
+    
+    optimizer_list = [optim]
+    return optimizer_list
 
-def load_scheduler(option, optimizer):
+def load_scheduler(option, optimizer_list):
+    optimizer = optimizer_list[0]
+    
     if 'cifar' in option.result['data']['data_type']:
         scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[60, 120, 160], gamma=0.2)
     elif 'imagenet' in option.result['data']['data_type']:
@@ -54,5 +62,7 @@ def load_scheduler(option, optimizer):
 
 def load_loss(option):
     criterion = nn.CrossEntropyLoss()
-    return criterion
+    
+    criterion_list = [criterion]
+    return criterion_list
 

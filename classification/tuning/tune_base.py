@@ -1,3 +1,8 @@
+import os
+import pathlib
+base_folder = str(pathlib.Path(__file__).parent.resolve())
+os.chdir(base_folder)
+
 import numpy as np
 import json
 import subprocess
@@ -67,9 +72,9 @@ if __name__=='__main__':
 
         w_d = 1e-4
         lr = 0.1
-        epoch = 2
+        epoch = 3
 
-        train_prop = 0.1
+        train_prop = 1.
         val_prop = 1.
 
         batch_size = 256
@@ -78,7 +83,7 @@ if __name__=='__main__':
 
         depth = 34
 
-        num_trials = 3
+        num_trials = 10
         cpus_per_trail = 5
         gpus_per_trail = 1
 

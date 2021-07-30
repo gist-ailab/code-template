@@ -1,7 +1,11 @@
+import os
+import pathlib
+base_folder = str(pathlib.Path(__file__).parent.resolve())
+os.chdir(base_folder)
+
 import numpy as np
 import json
 import subprocess
-import os
 from multiprocessing import Process
 import argparse
 import warnings
@@ -69,14 +73,19 @@ if __name__=='__main__':
         lr = 0.1
         epoch = 100
 
+        train_prop = 0.01
+        val_prop = 0.5
+        
         batch_size = 256
         mixed_precision = True
         num_per_gpu = 1
-        gpus = ['0,1,2', '0,1,2', '0,1,2']
-        ddp = True
+        gpus = ['0']
+        ddp = False
 
         depth = 34
 
+        resume = True
+        
         for t in gpus:
             comb_list.append([t, ix])
             ix += 1

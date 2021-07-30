@@ -8,6 +8,7 @@ from ray import tune
 from ray.tune import CLIReporter
 from ray.tune.schedulers import ASHAScheduler
 from functools import partial
+from copy import deepcopy
 
 # Utility
 def accuracy(output, target, topk=(1,)):
@@ -27,7 +28,12 @@ def accuracy(output, target, topk=(1,)):
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
 
-def train(option, rank, epoch, model, criterion, optimizer, multi_gpu, tr_loader, scaler, save_module, neptune, save_folder=''):
+def train(option, rank, epoch, model_list, criterion_list, optimizer_list, multi_gpu, tr_loader, scaler, save_module, neptune, save_folder=''):
+    # Select Model / Scheduler / Optimizer
+    model = model_list[0]
+    criterion = criterion_list[0]
+    optimizer = optimizer_list[0]
+    
     # GPU setup
     num_gpu = len(option.result['train']['gpu'].split(','))
     multi_gpu = num_gpu > 1
@@ -78,15 +84,19 @@ def train(option, rank, epoch, model, criterion, optimizer, multi_gpu, tr_loader
 
     # Saving Network Params
     if option.result['tune']['tuning']:
-        model_param = None
+        model_param = [None]
     else:
+        model_param = []
+        
         if multi_gpu:
-            model_param = model.module.state_dict()
+            for model in model_list:
+                model_param.append(deepcopy(model.module.state_dict()))
         else:
-            model_param = model.state_dict()
+            for model in model_list:
+                model_param.append(deepcopy(model.state_dict()))
 
-    save_module.save_dict['model'] = [model_param]
-    save_module.save_dict['optimizer'] = [optimizer.state_dict()]
+    save_module.save_dict['model'] = model_param
+    save_module.save_dict['optimizer'] = [optimizer.state_dict() for optimizer in optimizer_list]
     save_module.save_dict['save_epoch'] = epoch
 
     if (rank == 0) or (rank == 'cuda'):
@@ -105,10 +115,15 @@ def train(option, rank, epoch, model, criterion, optimizer, multi_gpu, tr_loader
     if (num_gpu > 1) and (option.result['train']['ddp']) and not option.result['tune']['tuning']:
         dist.barrier()
 
-    return model, optimizer, save_module
+    return save_module
 
 
-def validation(option, rank, epoch, model, criterion, val_loader, scaler, neptune):
+def validation(option, rank, epoch, model_list, criterion_list, val_loader, scaler, neptune):
+    # Select Target Model
+    model = model_list[0]
+    criterion = criterion_list[0]
+    
+    # GPU
     num_gpu = len(option.result['train']['gpu'].split(','))
 
     # For Log
