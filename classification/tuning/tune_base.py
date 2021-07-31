@@ -58,6 +58,9 @@ if __name__=='__main__':
 
     tuning = True
     project_folder = 'module-merge'
+    
+    cpus_per_trial = 1
+    gpus_per_trial = 1
 
     # Setup Configuration for Each Experiments
     if args.exp == 0:
@@ -84,8 +87,8 @@ if __name__=='__main__':
         depth = 34
 
         num_trials = 10
-        cpus_per_trail = 5
-        gpus_per_trail = 1
+        cpus_per_trial = 5
+        gpus_per_trial = 0.2
 
     else:
         raise('Select Proper Experiment Number')
@@ -132,8 +135,8 @@ if __name__=='__main__':
     json_tune['ddp'] = ddp
     json_tune['tuning'] = tuning
     json_tune['num_trials'] = num_trials
-    json_tune['cpus_per_trial'] = cpus_per_trail
-    json_tune['gpus_per_trial'] = gpus_per_trail
+    json_tune['cpus_per_trial'] = cpus_per_trial
+    json_tune['gpus_per_trial'] = gpus_per_trial
     save_json(json_tune, os.path.join(save_dir, exp_name, str(exp_num), 'tune.json'))
 
 

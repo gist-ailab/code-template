@@ -71,20 +71,21 @@ if __name__=='__main__':
 
         w_d = 1e-4
         lr = 0.1
-        epoch = 100
+        epoch = 3
 
-        train_prop = 0.01
-        val_prop = 0.5
+        train_prop = 0.1
+        val_prop = 1
         
         batch_size = 256
         mixed_precision = True
+
         num_per_gpu = 1
         gpus = ['0']
         ddp = False
 
         depth = 34
 
-        resume = True
+        resume = False
         
         for t in gpus:
             comb_list.append([t, ix])
