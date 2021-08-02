@@ -71,16 +71,16 @@ if __name__=='__main__':
 
         w_d = 1e-4
         lr = 0.1
-        epoch = 3
+        epoch = 10000
 
         train_prop = 0.1
         val_prop = 1
         
-        batch_size = 256
+        batch_size = 1024
         mixed_precision = True
 
         num_per_gpu = 1
-        gpus = ['0']
+        gpus = ['0','1','2']
         ddp = False
 
         depth = 34
