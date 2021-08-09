@@ -9,6 +9,7 @@ from ray.tune import CLIReporter
 from ray.tune.schedulers import ASHAScheduler
 from functools import partial
 from copy import deepcopy
+import torch.distributed as dist
 
 # Utility
 def accuracy(output, target, topk=(1,)):
@@ -36,7 +37,6 @@ def train(option, rank, epoch, model_list, criterion_list, optimizer_list, multi
     
     # GPU setup
     num_gpu = len(option.result['train']['gpu'].split(','))
-    multi_gpu = num_gpu > 1
 
     # For Log
     mean_loss = 0.
@@ -118,7 +118,7 @@ def train(option, rank, epoch, model_list, criterion_list, optimizer_list, multi
     return save_module
 
 
-def validation(option, rank, epoch, model_list, criterion_list, val_loader, scaler, neptune):
+def validation(option, rank, epoch, model_list, criterion_list, multi_gpu, val_loader, scaler, neptune):
     # Select Target Model
     model = model_list[0]
     criterion = criterion_list[0]

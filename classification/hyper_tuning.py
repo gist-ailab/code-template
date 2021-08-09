@@ -184,7 +184,7 @@ def main(configs, option, log=False):
             for model in model_list:
                 model.eval()
                 
-            result = naive_trainer.validation(option, rank, epoch, model_list, criterion_list, val_loader, scaler, run)
+            result = naive_trainer.validation(option, rank, epoch, model_list, criterion_list, multi_gpu, val_loader, scaler, run)
 
         else:
             raise('Select Proper Train-Type')
