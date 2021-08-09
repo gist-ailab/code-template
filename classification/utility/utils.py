@@ -47,7 +47,7 @@ class train_module():
         self.save_dict = {'criterion': criterion_list,
                           'model': [],
                           'optimizer': [],
-                          'scheduler': None,
+                          'scheduler': [],
                           'save_epoch': -1}
 
         self.init_epoch = 0

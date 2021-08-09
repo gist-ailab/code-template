@@ -72,7 +72,7 @@ def main(configs, option, log=False):
         for ix in range(len(model_list)):
             model_list[ix].to(device)
 
-    scheduler = option.result['train']['scheduler']
+    scheduler_list = option.result['train']['scheduler']
     batch_size, pin_memory = option.result['train']['batch_size'], option.result['train']['pin_memory']
 
     # Logger
@@ -126,8 +126,8 @@ def main(configs, option, log=False):
         run = None
 
     optimizer_list = load_optimizer(option, model_list)
-    if scheduler is not None:
-        scheduler = load_scheduler(option, optimizer_list)
+    if scheduler_list is not None:
+        scheduler_list = load_scheduler(option, optimizer_list)
 
 
     # Early Stopping
@@ -189,14 +189,10 @@ def main(configs, option, log=False):
         else:
             raise('Select Proper Train-Type')
 
-
-        if scheduler is not None:
-            scheduler.step(result['val_loss'])
-            save_module.save_dict['scheduler'] = [scheduler.state_dict()]
-        else:
-            save_module.save_dict['scheduler'] = None
-
-
+        if scheduler_list is not None:
+            for scheduler_ in scheduler_list:
+                scheduler_.step(result['val_loss'])
+                
         # Early Stopping
         param = None
 
@@ -246,7 +242,7 @@ if __name__=='__main__':
 
     num_trials = option.result['tune']['num_trials']
 
-    scheduler = ASHAScheduler(
+    tuning_scheduler = ASHAScheduler(
         metric="loss",
         mode="min",
         max_t=option.result['train']['total_epoch'],
@@ -263,7 +259,7 @@ if __name__=='__main__':
         resources_per_trial={"cpu": option.result['tune']['cpus_per_trial'], "gpu": option.result['tune']['gpus_per_trial']},
         config=configs,
         num_samples=num_trials,
-        scheduler=scheduler,
+        scheduler=tuning_scheduler,
         local_dir=save_folder,
         name='logging',
         callbacks=[ray.tune.logger.JsonLoggerCallback()])

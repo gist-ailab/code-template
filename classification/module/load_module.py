@@ -58,7 +58,7 @@ def load_scheduler(option, optimizer_list):
     else:
         raise ('select proper scheduler')
 
-    return scheduler
+    return [scheduler]
 
 def load_loss(option):
     criterion = nn.CrossEntropyLoss()

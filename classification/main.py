@@ -57,7 +57,7 @@ def main(rank, option, resume, save_folder, log, master_port):
     else:
         ddp = False
 
-    scheduler = option.result['train']['scheduler']
+    scheduler_list = option.result['train']['scheduler']
     batch_size, pin_memory = option.result['train']['batch_size'], option.result['train']['pin_memory']
 
     # Logger
@@ -146,11 +146,12 @@ def main(rank, option, resume, save_folder, log, master_port):
         pass
 
     
-    if scheduler is not None:
-        scheduler = load_scheduler(option, optimizer_list)
+    if scheduler_list is not None:
+        scheduler_list = load_scheduler(option, optimizer_list)
         
         if resume:
-            scheduler.load_state_dict(save_module.save_dict['scheduler'][0])
+            for ix, scheduler in enumerate(scheduler_list):
+                scheduler.load_state_dict(save_module.save_dict['scheduler'][ix])
     
     
     # Early Stopping
@@ -206,17 +207,19 @@ def main(rank, option, resume, save_folder, log, master_port):
             for model in model_list:
                 model.eval()
                 
-            result = naive_trainer.validation(option, rank, epoch, model_list, criterion_list, val_loader, scaler, run)
+            result = naive_trainer.validation(option, rank, epoch, model_list, criterion_list, multi_gpu, val_loader, scaler, run)
 
         else:
             raise('Select Proper Train-Type')
 
         # Run Scheduler
-        if scheduler is not None:
-            scheduler.step(result['val_loss'])
-            save_module.save_dict['scheduler'] = [scheduler.state_dict()]
-        else:
-            save_module.save_dict['scheduler'] = None
+        save_module.save_dict['scheduler'] = []
+
+        if scheduler_list is not None:
+            for scheduler in scheduler_list:
+                scheduler.step(result['val_loss'])
+                save_module.save_dict['scheduler'].append(scheduler.state_dict())
+
 
         # Save the last-epoch module
         if (rank == 0) or (rank == 'cuda'):
