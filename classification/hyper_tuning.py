@@ -191,7 +191,7 @@ def main(configs, option, log=False):
 
         if scheduler_list is not None:
             for scheduler_ in scheduler_list:
-                scheduler_.step(result['val_loss'])
+                scheduler_.step()
                 
         # Early Stopping
         param = None

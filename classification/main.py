@@ -212,12 +212,18 @@ def main(rank, option, resume, save_folder, log, master_port):
         else:
             raise('Select Proper Train-Type')
 
+
+        # Log Learning Rate
+        for param_group in optimizer_list[0].param_groups:
+            run['debug/lr'].log(param_group['lr'])
+        
+        
         # Run Scheduler
         save_module.save_dict['scheduler'] = []
 
         if scheduler_list is not None:
             for scheduler in scheduler_list:
-                scheduler.step(result['val_loss'])
+                scheduler.step()
                 save_module.save_dict['scheduler'].append(scheduler.state_dict())
 
 
